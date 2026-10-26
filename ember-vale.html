@@ -593,6 +593,8 @@ class Building {
   get spec() { return BUILD[this.type]; }
   get houses() { return this.built ? (BUILD[this.type].house || 0) : (this.from ? BUILD[this.from].house || 0 : 0); }
   get owner() { return G.F(this.f); }
+  // a border can swing over a farm or a site: nobody works a building that stands on another realm's land
+  get onHome() { const T = G.world.tile(this.x, this.y); return !T || !T.own || T.own === this.f; }
 }
 
 // ========== people ==========
@@ -637,8 +639,8 @@ class Colonist {
       const winter = G.season === 3;
       // keep working our own field if it still has room: most farmer decisions end here
       const cur = !winter && this.tid ? G.byId(this.tid) : null;
-      if (cur && cur.built && cur.f === f.id && (cur.type === 'farm' || cur.type === 'dock') && cl.tid(cur.id) < BUILD[cur.type].slots && this.reach(cur.x, cur.y)) return cur;
-      const ok = f.buildings.filter(b => b.built && (b.type === 'dock' || b.type === 'farm') && cl.tid(b.id) < BUILD[b.type].slots && this.reach(b.x, b.y));
+      if (cur && cur.built && cur.f === f.id && (cur.type === 'farm' || cur.type === 'dock') && cur.onHome && cl.tid(cur.id) < BUILD[cur.type].slots && this.reach(cur.x, cur.y)) return cur;
+      const ok = f.buildings.filter(b => b.built && (b.type === 'dock' || b.type === 'farm') && b.onHome && cl.tid(b.id) < BUILD[b.type].slots && this.reach(b.x, b.y));
       if (!ok.length) return null;
       const mine = ok.find(b => b.id === this.tid);
       if (mine && !(winter && mine.type === 'farm' && ok.some(b => b.type === 'dock'))) return mine;
@@ -646,7 +648,7 @@ class Colonist {
       return ok[0];
     }
     if (this.job === 'builder') {
-      const sites = f.buildings.filter(b => !b.built && this.reach(b.x, b.y));
+      const sites = f.buildings.filter(b => !b.built && b.onHome && this.reach(b.x, b.y));
       if (!sites.length) return null;
       sites.sort((a, b) => (cl.tid(a.id) - cl.tid(b.id)) * 3 + dist(this, a.x, a.y) - dist(this, b.x, b.y));
       return sites[0];
@@ -716,12 +718,12 @@ class Colonist {
     const f = this.home;
     if (this.job === 'farmer') {
       const b = G.byId(this.tid);
-      if (!b || !b.built || b.f !== f.id) return quit();
+      if (!b || !b.built || b.f !== f.id || !b.onHome) return quit();
       this.wt += dt;
       if (this.wt >= 5) { this.carry = { r: 'food', n: f.farmYield(b) }; this.goStore(); }
     } else if (this.job === 'woodcutter' || this.job === 'miner') {
       const T = G.world.tile(this.tx, this.ty), want = this.job === 'woodcutter' ? 1 : 2;
-      if (!T || T.t !== want || T.amt <= 0) return quit();
+      if (!T || T.t !== want || T.amt <= 0 || (T.own && T.own !== f.id)) return quit();
       this.wt += dt;
       if (this.wt >= (want === 1 ? 5 : 6)) {
         const n = Math.min((want === 1 ? 3 : 2) + (f.age >= 3 ? 1 : 0), T.amt);
@@ -733,7 +735,7 @@ class Colonist {
       }
     } else if (this.job === 'builder') {
       const b = G.byId(this.tid);
-      if (!b || b.built || b.f !== f.id) return quit();
+      if (!b || b.built || b.f !== f.id || !b.onHome) return quit();
       b.prog += dt * (f.hasGreat('architect') ? 1.5 : 1);
       if (b.prog >= BUILD[b.type].time) {
         b.built = true; delete b.from;
@@ -786,8 +788,8 @@ class Steward {
     const f = this.f, crew = f.people.filter(o => o.st !== 'exodus');
     const pop = crew.length, se = G.season;
     if (!pop) return;
-    const slots = f.buildings.filter(b => b.built && (b.type === 'farm' || b.type === 'dock')).reduce((n, b) => n + BUILD[b.type].slots, 0);
-    const sites = f.buildings.filter(b => !b.built).length;
+    const slots = f.buildings.filter(b => b.built && b.onHome && (b.type === 'farm' || b.type === 'dock')).reduce((n, b) => n + BUILD[b.type].slots, 0);
+    const sites = f.buildings.filter(b => !b.built && b.onHome).length;
     const c = f.cap;
     let foodShare = se === 3 ? 0.42 : 0.36;
     if (f.res.food < pop * 3) foodShare += 0.1;
@@ -896,9 +898,10 @@ class Steward {
   }
   build() {
     const f = this.f, pop = f.pop, se = G.season, c = f.cap;
+    this.dropStranded();
     const sites = f.buildings.filter(b => !b.built);
     if (sites.length >= 1 + Math.floor(pop / 10)) return;
-    const slots = f.buildings.filter(b => b.type === 'farm' || b.type === 'dock').reduce((n, b) => n + BUILD[b.type].slots, 0);
+    const slots = f.buildings.filter(b => (b.type === 'farm' || b.type === 'dock') && b.onHome).reduce((n, b) => n + BUILD[b.type].slots, 0);
     const next = AGES[f.age + 1];
     const lost = f.age > 0 && !f.anyCount(AGES[f.age].mark) ? AGES[f.age] : null;
     const markType = lost ? lost.mark : next ? next.mark : null;
@@ -950,6 +953,18 @@ class Steward {
     }
     if (f.age >= 1 && pop < POPCAP[f.age] && pop >= f.futureHousing - 4 && tryBuild('hut', 'Building homes ahead of newcomers.')) return;
   }
+  // building sites that a neighbour's border swallowed can never be finished: an upgrade falls back to what stood there, a new site is given up
+  dropStranded() {
+    const f = this.f, gone = f.buildings.filter(b => !b.built && !b.onHome);
+    if (!gone.length) return;
+    const W = G.world;
+    for (const b of gone) {
+      if (b.from) { b.type = b.from; b.built = true; b.prog = 0; delete b.from; }
+      else { const T = W.tile(b.x, b.y); if (T && T.b === b.id) T.b = 0; G.buildings.splice(G.buildings.indexOf(b), 1); }
+      W.touch(b.x, b.y);
+    }
+    G.dirtyB();
+  }
   trade() {
     const f = this.f, c = f.cap;
     for (let i = 0; i < f.builtCount('market'); i++) {
@@ -992,7 +1007,7 @@ class Settlement {
   get futureHousing() { return this.buildings.reduce((n, b) => n + (BUILD[b.type].house || 0), 0); }
   get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age; }
   get drops() {
-    if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store')); }
+    if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store') && b.onHome); }
     return this._drops;
   }
   nearestDrop(x, y, ok) {
