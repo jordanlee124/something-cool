@@ -176,6 +176,13 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .pick button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); font: 700 1.1rem var(--f-mono); padding: 12px 0; border-radius: 10px; cursor: pointer; }
 .pick button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.awbar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.awbar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.awbody { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.awbody h3 { margin: 4px 0 0; font: 700 0.72rem var(--f-body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.awbody ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.awbody li { font-size: 0.88rem; line-height: 1.35; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; }
+.awbody li i { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--line); }
 .sheet button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 .selname { font-family: var(--f-display); font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
 .selname i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
@@ -257,6 +264,16 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
   </div>
 </div>
 
+<div class="modal" id="away" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="awt">
+    <h2 id="awt">While you were away</h2>
+    <p id="awsub">The vale kept going without you.</p>
+    <div class="awbar" id="awbarbox"><i id="awbar"></i></div>
+    <div class="awbody" id="awbody"></div>
+    <button id="awstop" class="ghost">Stop here</button>
+    <button id="awok" hidden>Keep watching</button>
+  </div>
+</div>
 <div class="modal" id="setup" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="st">
     <h2 id="st">Found a new world</h2>
@@ -1445,7 +1462,7 @@ class Diplomacy {
       G.chron.record(`${a.title} crushed ${b.name} and brought its ${ppl} back under ${a.name}.`, 'bad', a);
       G.chron.card('Reunited', `${a.name} reclaims ${b.name}`, `${a.title} has crushed the breakaway. ${ppl} answer${n === 1 ? 's' : ''} to ${a.name} again.`, a);
     } else {
-      G.chron.record(`${a.title} of ${a.name} conquered ${b.name} and its ${ppl}.`, 'bad', a);
+      G.chron.record(`${a.title} of ${a.name} conquered ${b.name}${n ? ` and its ${ppl}` : ", whose last people had already fled"}.`, 'bad', a);
       G.chron.card('Conquest', `${a.name} conquers ${b.name}`, `${b.title} is overthrown. ${ppl} now answer${n === 1 ? 's' : ''} to ${a.title}.`, a);
     }
     G.recomputeTerritory();
@@ -1729,7 +1746,7 @@ class Game {
       this.growSide(this.nearestSide(big.cx, big.cy));
     }
     if (!this.alive().length) View.gameOver();
-    save();
+    if (this.day % 4 === 0 && !Away.active) save();   // a big world is ~0.5 MB of JSON: don't write it every day
   }
   step(dt) {
     this.t += dt; this.tick = (this.tick || 0) + 1;
@@ -1752,7 +1769,7 @@ class Game {
 
   // ---------- saving and loading ----------
   toJSON() {
-    return { v: 4, day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
+    return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
       camps: this.camps_, dip: this.dip, chron: this.chron, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; g.setup(n); return g; }
@@ -1762,6 +1779,7 @@ class Game {
     if (d.v !== 4) return null;
     const g = new Game(); G = g;
     for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN']) g[k] = d[k];
+    g.savedAt = d.at || 0;
     g.world = World.from(d.world);
     g.buildings = d.buildings.map(b => new Building(b));
     g.cols = d.cols.map(c => new Colonist(c));
@@ -2498,10 +2516,70 @@ class Interface {
 
 // What the simulation is allowed to ask of the page.
 const View = {
-  toast: (t, k) => UI.toast(t, k),
-  float: (x, y, t, c) => R.float(x, y, t, c),
+  toast: (t, k) => { if (!Away.active) UI.toast(t, k); },
+  float: (x, y, t, c) => { if (!Away.active) R.float(x, y, t, c); },
   forgetWalkers: k => { delete R.walkers[k]; },
   gameOver: () => UI.gameOver(),
+};
+
+// ========== while you were away ==========
+// When the vale is reopened (or the tab comes back), the world catches up on the time you were gone,
+// at the speed you left it on, up to one year, then sums up what changed.
+const AWAY_MAX = YEAR * DAY;   // one game year, in game seconds
+const Away = {
+  active: false,
+  start(realSecs) {
+    if (!G || G.over || !G.speed || this.active) return;
+    const total = Math.min(realSecs * G.speed, AWAY_MAX);
+    if (total < DAY) return;
+    this.active = true; this.stop = false; this.left = total; this.total = total;
+    this.day0 = G.day; this.before = new Map(G.alive().map(f => [f.id, { name: f.name, pop: f.pop, age: f.age }]));
+    $('awt').textContent = 'While you were away';
+    $('awsub').textContent = `Catching up on ${Math.round(total / DAY)} days…`;
+    $('awbody').innerHTML = ''; $('awbarbox').hidden = false; $('awbar').style.width = '0';
+    $('awstop').hidden = false; $('awok').hidden = true; $('away').hidden = false;
+    setTimeout(() => this.slice(), 30);
+  },
+  // simulate in ~30 ms slices so the page stays responsive and the bar moves
+  slice() {
+    const t0 = performance.now();
+    while (this.left > 0 && !G.over && !this.stop && performance.now() - t0 < 30) { const d = Math.min(0.4, this.left); G.step(d); this.left -= d; }
+    $('awbar').style.width = `${Math.round((1 - this.left / this.total) * 100)}%`;
+    $('awsub').textContent = `Catching up: Year ${G.year}, ${SEASONS[G.season]}…`;
+    if (this.left > 0 && !G.over && !this.stop) { setTimeout(() => this.slice(), 0); return; }
+    this.finish();
+  },
+  finish() {
+    const days = G.day - this.day0, ch = G.chron;
+    ch.cards.length = 0; R.reset(); UI.html = {};
+    $('awt').textContent = days ? `${days} day${days === 1 ? '' : 's'} passed` : 'Nothing happened';
+    $('awsub').textContent = `It is now Year ${G.year}, ${SEASONS[G.season].toLowerCase()}.` + (this.stop ? ' You stopped the catch-up early.' : '');
+    const realms = [];
+    for (const [id, b] of this.before) {
+      const f = G.F(id);
+      if (!f || f.gone) { realms.push({ c: f ? f.color : '', t: `${b.name} is gone.` }); continue; }
+      const bits = [];
+      if (f.age > b.age) bits.push(`rose to ${an(AGES[f.age].name.toLowerCase())}`);
+      else if (f.age < b.age) bits.push(`fell back to ${an(AGES[f.age].name.toLowerCase())}`);
+      if (Math.abs(f.pop - b.pop) >= 5) bits.push(`${f.pop > b.pop ? 'grew' : 'shrank'} from ${b.pop} to ${f.pop} people`);
+      realms.push({ c: f.color, t: bits.length ? `${f.name} ${bits.join(' and ')}.` : `${f.name} held steady at ${f.pop} ${f.pop === 1 ? 'person' : 'people'}.`, quiet: !bits.length });
+    }
+    for (const f of G.alive()) if (!this.before.has(f.id)) realms.push({ c: f.color, t: `${f.name} was founded and now has ${f.pop} ${f.pop === 1 ? 'person' : 'people'}.` });
+    realms.sort((p, q) => (p.quiet ? 1 : 0) - (q.quiet ? 1 : 0));   // what changed first
+    const big = ch.history.filter(e => e.d > this.day0 && e.k !== 'age').slice(0, 10).reverse();
+    const li = (c, t) => `<li><i style="${c ? `background:${c}` : ''}"></i><span>${t}</span></li>`;
+    const esc = s => s.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+    $('awbody').innerHTML = `<h3>The realms</h3><ul>${realms.map(r => li(r.c, esc(r.t))).join('')}</ul>` +
+      (big.length ? `<h3>The chronicle</h3><ul>${big.map(e => li(e.c, `Year ${e.y}: ${esc(e.text)}`)).join('')}</ul>` : '');
+    $('awbarbox').hidden = true; $('awstop').hidden = true; $('awok').hidden = false;
+    this.active = false;
+    save();
+    if (G.over) UI.gameOver();
+  },
+  wire() {
+    $('awstop').addEventListener('click', () => { this.stop = true; });
+    $('awok').addEventListener('click', () => { $('away').hidden = true; });
+  },
 };
 
 // ========== boot and the main loop ==========
@@ -2539,7 +2617,7 @@ function frame(now) {
   const gap = now - last, rdt = Math.min(0.1, gap / 1000); last = now;
   const t0 = performance.now();
   let ran = 0;
-  if (!G.over && G.speed > 0 && $('setup').hidden) {
+  if (!G.over && G.speed > 0 && $('setup').hidden && !Away.active) {
     // never spend more than ~10 ms a frame simulating: on a slow phone the world runs a little slower
     // instead of each late frame demanding even more catch-up work the next frame
     let dt = rdt * G.speed;
@@ -2567,12 +2645,19 @@ function start(data) {
   UI.refresh();
   if (fresh) UI.openSetup(false);
   if (G.over) UI.gameOver();
+  Away.wire();
+  if (!fresh && G.savedAt) Away.start((Date.now() - G.savedAt) / 1000);
   requestAnimationFrame(t => { last = t; frame(t); });
 }
 window.addEventListener('resize', () => R.resize());
-document.addEventListener('visibilitychange', () => { if (document.hidden && G) save(); });
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (!G) return;
+  if (document.hidden) { hiddenAt = Date.now(); if (!Away.active) save(); }
+  else if (hiddenAt) { const s = (Date.now() - hiddenAt) / 1000; hiddenAt = 0; if (s > 20) Away.start(s); }
+});
 window.claude?.hot?.snapshot?.(() => ({ save: JSON.stringify(G) }));
-window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter };
+window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter, Away };
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
 </script>
