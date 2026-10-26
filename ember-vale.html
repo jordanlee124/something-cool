@@ -2160,22 +2160,39 @@ class Game {
     View.toast(`New land mapped to the ${where}`, 'good');
     this.recomputeTerritory();
   }
+  // look for open, unclaimed land for a new settlement, close to where people already live.
+  // Ruled-out ground is marked once on a grid, so a big old world costs a few ms, not a few hundred.
   scanSite(minFromTc, minFromCamp) {
     const W = this.world, tcs = this.buildings.filter(b => b.type === 'tc'), camps = this.camps();
-    let best = null, bs = -1e9;
-    for (let y = W.y0 + 3; y < W.y1 - 3; y++) for (let x = W.x0 + 3; x < W.x1 - 3; x++) {
-      const C = W.tile(x, y);
-      if (C.t === 3 || C.t === 2 || C.b || C.c || C.own) continue;
-      let open = 0;
-      for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) { const T = W.tile(xx, yy); if (T && T.open && !T.b && !T.own) open++; }
-      if (open < 16) continue;
-      if (tcs.some(b => Math.hypot(b.x - x, b.y - y) < minFromTc)) continue;
-      if (camps.some(c => Math.hypot(c.x - x, c.y - y) < minFromCamp)) continue;
-      if (this.buildings.some(b => Math.abs(b.x - x) < 4 && Math.abs(b.y - y) < 4 && Math.hypot(b.x - x, b.y - y) < 4)) continue;
-      const sc = open + rnd() * 6;
-      if (sc > bs) { bs = sc; best = { x, y }; }
-    }
-    return best;
+    const bad = new Uint8Array(W.w * W.h);
+    const mark = (cx, cy, r) => {
+      const R = Math.ceil(r);
+      for (let y = Math.max(W.y0, cy - R); y <= Math.min(W.y1 - 1, cy + R); y++) for (let x = Math.max(W.x0, cx - R); x <= Math.min(W.x1 - 1, cx + R); x++)
+        if (Math.hypot(x - cx, y - cy) < r) bad[(y - W.y0) * W.w + (x - W.x0)] = 1;
+    };
+    for (const b of this.buildings) mark(b.x, b.y, 4);
+    for (const b of tcs) mark(b.x, b.y, minFromTc);
+    for (const c of camps) mark(c.x, c.y, minFromCamp);
+    const scan = (x0, y0, x1, y1, step) => {
+      let best = null, bs = -1e9;
+      for (let y = Math.max(W.y0 + 3, y0); y < Math.min(W.y1 - 3, y1); y += step) for (let x = Math.max(W.x0 + 3, x0); x < Math.min(W.x1 - 3, x1); x += step) {
+        if (bad[(y - W.y0) * W.w + (x - W.x0)]) continue;
+        const C = W.tile(x, y);
+        if (C.t === 3 || C.t === 2 || C.b || C.c || C.own) continue;
+        let open = 0;
+        for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) { const T = W.tile(xx, yy); if (T && T.open && !T.b && !T.own) open++; }
+        if (open < 16) continue;
+        let near = 1e9; for (const b of tcs) near = Math.min(near, Math.hypot(b.x - x, b.y - y));
+        const sc = open + rnd() * 6 - (near < 1e9 ? near * 0.08 : 0);
+        if (sc > bs) { bs = sc; best = { x, y }; }
+      }
+      return best;
+    };
+    // first within reach of the settled land, then anywhere already mapped
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of [...tcs, ...camps]) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    const m = 22;
+    return (x0 < Infinity && scan(x0 - m, y0 - m, x1 + m, y1 + m, 1)) || scan(W.x0, W.y0, W.x1, W.y1, 2);
   }
   // somewhere to found a new settlement; if the known world is full, scouts push the map outward
   findSite(minFromTc, minFromCamp, from) {
@@ -2704,7 +2721,8 @@ class Renderer {
     if (Replay.active) { b = Replay.box(); fitWorld = true; }
     else if (z && z.kind === 'f') { const f = G.F(z.id); if (f && !f.gone) b = Renderer.box(f.buildings, 2); else UI.zoom = null; }
     else if (z && z.kind === 'c') { const c = G.camps_.find(x => x.id === z.id); if (c && !c.gone) b = { x0: c.x - 4, y0: c.y - 4, x1: c.x + 5, y1: c.y + 5 }; else UI.zoom = null; }
-    if (!b && UI.view === 'all') { b = { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
+    // the whole world means everywhere people live, not every empty mile the scouts ever mapped
+    if (!b && UI.view === 'all') { b = Renderer.box(G.buildings.concat(G.camps()), 8) || { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
     if (!b) {
       const all = Renderer.box(G.buildings.concat(G.camps()), 3);
       if (all && all.x1 - all.x0 <= 56 && all.y1 - all.y0 <= 70) b = all;
