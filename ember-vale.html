@@ -77,6 +77,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .store .n { font-size: 0.68rem; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .store.low .v, .store.low .n { color: var(--bad); }
 
+.replay { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "play slide when" "done done done"; gap: 8px 10px; align-items: center; }
+.replay #rpplay { grid-area: play; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 1rem; cursor: pointer; }
+.replay input { grid-area: slide; width: 100%; accent-color: var(--accent); }
+.replay #rpwhen { grid-area: when; font: 700 0.8rem var(--f-body); font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
+.replay #rpdone { grid-area: done; padding: 9px; border-radius: 10px; background: transparent; color: var(--accent); border: 1px solid var(--line); font: 600 0.85rem var(--f-body); cursor: pointer; }
+#rpopen { align-self: flex-start; }
+.replaying .card, .replaying .toast, .replaying .banner { display: none !important; }
 .meter { align-self: flex-start; margin-top: -4px; font: 600 0.72rem/1 Figtree, system-ui, sans-serif; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; font-variant-numeric: tabular-nums; cursor: pointer; }
 .meter b { color: var(--fps, #3f8f2f); }
 .meter.off span { display: none; }
@@ -166,6 +173,10 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .sheet button { padding: 12px 14px; border-radius: 10px; border: 0; background: var(--accent); color: var(--accent-ink); font: 600 0.92rem var(--f-body); cursor: pointer; }
 .rel { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 8px; align-items: center; font-size: 0.82rem; }
 .rel .who { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.faith { display: flex; flex-direction: column; gap: 2px; font-size: 0.82rem; }
+.faith .who { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.faith .who i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+.faith .tp { color: var(--muted); padding-left: 15px; }
 .rel .who i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .relbar { height: 6px; background: var(--bg); border-radius: 3px; position: relative; overflow: hidden; }
 .relbar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line); }
@@ -176,6 +187,13 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .pick button { background: var(--bg); color: var(--ink); border: 1px solid var(--line); font: 700 1.1rem var(--f-mono); padding: 12px 0; border-radius: 10px; cursor: pointer; }
 .pick button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.awbar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+.awbar i { display: block; height: 100%; width: 0; background: var(--accent); }
+.awbody { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow-y: auto; }
+.awbody h3 { margin: 4px 0 0; font: 700 0.72rem var(--f-body); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.awbody ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.awbody li { font-size: 0.88rem; line-height: 1.35; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; }
+.awbody li i { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--line); }
 .sheet button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 .selname { font-family: var(--f-display); font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
 .selname i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
@@ -214,6 +232,12 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="banner" id="banner" hidden><small id="bansmall">A new age</small><strong id="banbig"></strong></div>
     <div class="card" id="card" role="status" hidden><i id="cardbar"></i><small id="cardk"></small><strong id="cardt"></strong><p id="cardx"></p></div>
   </div>
+  <div class="replay" id="replay" hidden>
+    <button id="rpplay" aria-label="Play">▶</button>
+    <input type="range" id="rpslider" min="0" max="0" value="0" aria-label="Point in history">
+    <span id="rpwhen"></span>
+    <button id="rpdone" class="ghost">Back to now</button>
+  </div>
   <button class="meter" id="meter" type="button" aria-label="Frame rate meter. Tap to hide or show the details.">– fps</button>
   <div class="info" id="info">Every settlement runs itself. Tap the map to inspect a person, building or tile.</div>
 
@@ -234,6 +258,8 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
       <div class="counts" id="counts"></div>
     </div>
     <div class="pane" id="pane-pol" hidden>
+      <div class="sub">Faiths</div>
+      <div class="sites" id="faiths"></div>
       <div class="sub">Relations</div>
       <div class="sites" id="rels"></div>
       <div class="sub">Recent politics</div>
@@ -241,6 +267,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     </div>
     <div class="pane" id="pane-log" hidden>
       <div class="miles" id="miles"></div>
+      <button class="showall" id="rpopen">Replay the borders</button>
       <div class="sub">History of the vale</div>
       <div class="hist" id="hist"></div>
       <details class="daily"><summary>Daily record</summary><ul class="log" id="log"></ul></details>
@@ -257,6 +284,16 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
   </div>
 </div>
 
+<div class="modal" id="away" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="awt">
+    <h2 id="awt">While you were away</h2>
+    <p id="awsub">The vale kept going without you.</p>
+    <div class="awbar" id="awbarbox"><i id="awbar"></i></div>
+    <div class="awbody" id="awbody"></div>
+    <button id="awstop" class="ghost">Stop here</button>
+    <button id="awok" hidden>Keep watching</button>
+  </div>
+</div>
 <div class="modal" id="setup" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="st">
     <h2 id="st">Found a new world</h2>
@@ -890,6 +927,7 @@ class Settlement {
     Object.assign(this, rest);
     if (this.note === undefined) this.note = typeof steward === 'string' ? steward : '';
     if (this.ruler && !(this.ruler instanceof Ruler)) this.ruler = new Ruler(this.ruler);
+    if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
   }
   static found(name, x, y, parent) {
     const used = new Set(G.factions.map(f => f.name));
@@ -898,7 +936,8 @@ class Settlement {
     const color = COLORS.find(c => !usedC.has(c)) || pick(COLORS);
     const f = new Settlement({ id: G.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10 }, mood: 62, grief: 0, moodWhy: [],
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
-      stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {} });
+      stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
+      culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40 });
     f.ruler = Ruler.crown(f);
     return f;
   }
@@ -1321,6 +1360,10 @@ class Diplomacy {
       if (this.broke[k] && G.day - this.broke[k] < YEAR * 2) {
         C.record(`${ag.name} betrayed its old ally ${df.name}. ${ag.title} declared war.`, 'bad', ag);
         C.card('Betrayal', `${ag.name} betrays ${df.name}`, `Allies until recently, ${ag.title} has turned on ${df.title}.`, ag);
+      } else if (this.holy) {
+        const fa = G.faiths.get(ag.faith);
+        C.record(`${ag.title} of ${ag.name} declared a holy war on the unbelievers of ${df.name}${fa ? `, in the name of ${fa.name}` : ''}.`, 'bad', ag);
+        C.card('Holy war', `${ag.name} declares a holy war on ${df.name}`, `${fa ? `${upper(fa.name)} calls` : 'The priests call'} the faithful to march against ${df.title}.`, ag);
       } else {
         C.record(`${ag.title} of ${ag.name} declared war on ${df.name}.`, 'bad', ag);
         if (Math.max(ag.age, df.age) >= 3) C.card('War', `${ag.name} declares war on ${df.name}`, `${ag.title} marches against ${df.title}.`, ag);
@@ -1362,12 +1405,15 @@ class Diplomacy {
       if (contact && Math.max(pa, pb) > 2 * Math.min(pa, pb) + 5) r -= 0.15;
       if (fs.length >= 3 && a.age >= 3 && b.age >= 3 && top.includes(a) && top.includes(b)) r -= 0.3;
       if (a.allies.length + b.allies.length >= 4) r -= 0.2;
+      if (a.culture && a.culture === b.culture) r += 0.05;
+      if (a.faith && b.faith) r += a.faith === b.faith ? 0.12 : -0.05 * (a.zeal + b.zeal) / 100;
       for (const f of [a, b]) { const t = f.ruler.trait; if (contact && (t === 'proud' || t === 'cruel')) r -= 0.15; if (t === 'wise' || t === 'just') r += 0.08; }
       r = clamp(r, -100, 100);
       this.rel[k] = r;
       if (st === 'neutral' && r >= 50) this.set(a, b, 'ally');
       else if (st === 'ally' && r < 30) this.set(a, b, 'neutral');
       else if (st === 'neutral' && r <= -40) this.set(a, b, 'war');
+      else if (st === 'neutral' && r <= -25 && a.faith && b.faith && a.faith !== b.faith && Math.max(a.zeal, b.zeal) >= 65 && rnd() < 0.012) { this.holy = true; this.set(a, b, 'war'); this.holy = false; }
       else if (st === 'war' && r >= -15) this.set(a, b, 'neutral');
       if (this.stance[k] !== 'war') {
         if (!this.open[k] && contact && r >= 25 && rnd() < 0.03) this.openBorders(a, b);
@@ -1401,7 +1447,8 @@ class Diplomacy {
       { w: 1, ok: st === 'neutral' && r > 15, d: 15, t: `${a.name} and ${b.name} swore oaths of friendship.` },
       { w: 1, ok: G.camps().length > 0 && st !== 'war', d: 10, t: `${a.name} and ${b.name} agreed to stand together against the barbarians.` },
       { w: 2, ok: st !== 'war' && a.pop > b.pop * 2 && contact > 0, d: -15, t: `${a.name} demanded tribute from ${b.name} and was refused.` },
-      { w: 2, ok: faith(a) > 0 && faith(b) > 0, d: -15, t: `Priests of ${a.name} denounced the faith of ${b.name} as heresy.` },
+      { w: 2, ok: faith(a) > 0 && faith(b) > 0 && a.faith !== b.faith, d: -15, t: `Priests of ${a.name} denounced the faith of ${b.name} as heresy.` },
+      { w: 1, ok: a.faith && a.faith === b.faith && st !== 'war', d: 14, t: `Pilgrims from ${a.name} were welcomed at the shrines of ${b.name}.` },
       { w: 1, ok: st === 'ally', d: -20, t: `${a.name} caught spies from its ally ${b.name}.` },
     ].filter(o => o.ok);
     let rr = rnd() * opts.reduce((n, o) => n + o.w, 0), o = opts[0];
@@ -1445,15 +1492,97 @@ class Diplomacy {
       G.chron.record(`${a.title} crushed ${b.name} and brought its ${ppl} back under ${a.name}.`, 'bad', a);
       G.chron.card('Reunited', `${a.name} reclaims ${b.name}`, `${a.title} has crushed the breakaway. ${ppl} answer${n === 1 ? 's' : ''} to ${a.name} again.`, a);
     } else {
-      G.chron.record(`${a.title} of ${a.name} conquered ${b.name} and its ${ppl}.`, 'bad', a);
+      G.chron.record(`${a.title} of ${a.name} conquered ${b.name}${n ? ` and its ${ppl}` : ", whose last people had already fled"}.`, 'bad', a);
       G.chron.card('Conquest', `${a.name} conquers ${b.name}`, `${b.title} is overthrown. ${ppl} now answer${n === 1 ? 's' : ''} to ${a.title}.`, a);
     }
     G.recomputeTerritory();
   }
-  toJSON() { return { rel: this.rel, stance: this.stance, war: this.war, contact: this.contact, broke: this.broke }; }
+  toJSON() { return { rel: this.rel, stance: this.stance, war: this.war, contact: this.contact, broke: this.broke, open: this.open }; }
 }
 
 // ========== plague ==========
+// ---------- culture and religion ----------
+// Each realm carries a culture (inherited from the settlement that founded it) and, once it has a chapel,
+// a faith. Faiths spread along borders, alliances and trade, split in schisms, and sour or warm relations.
+const FAITH_HEAD = ['The Church of', 'The Way of', 'The Order of', 'The Cult of', 'The Light of', 'The Path of'];
+const FAITH_TAIL = ['the Dawn', 'the Ember', 'the Deep Well', 'the Seven Stars', 'the Green Mother', 'the Iron Saint', 'the Still Water', 'the Long Night', 'the Harvest', 'the Open Hand', 'the Burning Oak', 'the Silver Moon'];
+const FAITH_COLORS = ['#f2d16b', '#eeeeee', '#7fb7e6', '#c77dff', '#ff9a6b', '#6bd6a8', '#e0607e', '#9aa0ff'];
+class Faiths {
+  constructor(d) { this.list = (d && d.list) || []; this.nid = (d && d.nid) || 1; }
+  static cultureOf(name) { const w = name.split(' ').pop(); return `${w.replace(/(ford|hold|mere|vale|wick|by|ton|gate|ham|stead|brook|bridge|crest|hill|harbour|water|march|moor|cliff|well|rush|bury|spur|haven|dale)$/i, '') || w}folk`; }
+  say(text, k, f) { G.chron.record(text, k, f); G.chron.note(text, 'pol'); }
+  get(id) { return this.list.find(x => x.id === id); }
+  name(id) { const x = this.get(id); return x ? x.name : 'no faith'; }
+  holy(f) { return G.faiths.list.some(x => x.holy === f.id && !x.gone); }
+  found(f, from) {
+    const used = new Set(this.list.filter(x => !x.gone).map(x => x.name));
+    let name;
+    if (from) name = `${pick(['The Reformed', 'The True', 'The Old', 'The Free'])} ${from.name.replace(/^The /, '')}`;
+    else { const tails = FAITH_TAIL.filter(t => ![...used].some(u => u.endsWith(t))); name = `${pick(FAITH_HEAD)} ${pick(tails.length ? tails : FAITH_TAIL)}`; }
+    const usedC = new Set(this.list.filter(x => !x.gone).map(x => x.color));
+    const x = { id: this.nid++, name, color: FAITH_COLORS.find(c => !usedC.has(c)) || pick(FAITH_COLORS), holy: f.id, founded: G.day, parent: from ? from.id : 0, gone: false };
+    this.list.push(x);
+    f.faith = x.id;
+    return x;
+  }
+  strength(f) { return f.pop * (0.5 + f.zeal / 100) * (1 + f.builtCount('chapel') + 2 * f.builtCount('cathedral')); }
+  convert(f, x, how) {
+    const old = this.get(f.faith);
+    f.faith = x.id; f.zeal = Math.max(25, f.zeal - 15);
+    this.say(how || `${f.name} turned from ${old ? old.name : 'the old gods'} to ${x.name}.`, 'pol', f);
+  }
+  daily() {
+    const fs = G.alive(), dip = G.dip;
+    for (const f of fs) {
+      // zeal drifts toward what its ruler and churches make it
+      const want = 30 + (f.ruler.trait === 'pious' ? 25 : 0) + (f.ruler.trait === 'wise' ? -5 : 0) + 5 * Math.min(3, f.builtCount('chapel')) + 15 * Math.min(1, f.builtCount('cathedral')) + (this.holy(f) ? 10 : 0) + (f.enemies.some(o => o.faith && o.faith !== f.faith) ? 8 : 0);
+      f.zeal = clamp((f.zeal || 40) + (want - (f.zeal || 40)) * 0.05, 0, 100);
+      if (f.faith && this.get(f.faith) && !this.get(f.faith).gone) continue;
+      if (!f.builtCount('chapel')) continue;
+      // a realm's first chapel: take up a neighbour's faith, or found its own
+      const near = fs.filter(o => o !== f && o.faith && (dip.contact[key(f.id, o.id)] || dip.stanceOf(f, o) === 'ally'));
+      const best = near.sort((a, b) => this.strength(b) - this.strength(a))[0];
+      if (best && rnd() < 0.6) { const x = this.get(best.faith); f.faith = x.id; this.say(`The priests of ${f.name} took up ${x.name}, the faith of ${best.name}.`, 'pol', f); }
+      else { const x = this.found(f); this.say(`${x.name} was born in ${f.name}. ${f.title} named it the one true faith.`, 'good', f); if (f.age >= 2) G.chron.card('A new faith', `${x.name}`, `Born in ${f.name}, it will spread wherever its priests can walk.`, f); }
+    }
+    // faiths spread to neighbours, allies and trading partners
+    for (let i = 0; i < fs.length; i++) for (let j = i + 1; j < fs.length; j++) {
+      const a = fs[i], b = fs[j];
+      if (!a.faith || !b.faith || a.faith === b.faith) continue;
+      const k = key(a.id, b.id), st = dip.stanceOf(a, b);
+      if (st === 'war' || !(dip.contact[k] || st === 'ally' || dip.isOpen(a, b))) continue;
+      const sa = this.strength(a), sb = this.strength(b);
+      const [w, l, sw, sl] = sa >= sb ? [a, b, sa, sb] : [b, a, sb, sa];
+      if (this.holy(l)) continue;
+      const p = 0.0025 * (sw / (sw + sl + 1)) * (1.5 - l.zeal / 100) * (dip.isOpen(a, b) ? 1.5 : 1);
+      if (rnd() < p) this.convert(l, this.get(w.faith), `Missionaries from ${w.name} won ${l.name} over to ${this.get(w.faith).name}.`);
+    }
+    // once a year, a large faith may split
+    if (G.day % YEAR === 3) for (const x of this.list.filter(x => !x.gone)) {
+      const members = fs.filter(f => f.faith === x.id);
+      const holyR = G.F(x.holy);
+      if (members.length < 3 || !holyR || holyR.gone || rnd() > 0.3) continue;
+      const rebel = members.filter(f => f !== holyR).sort((p, q) => dip.relOf(p, holyR) - dip.relOf(q, holyR))[0];
+      if (!rebel || dip.relOf(rebel, holyR) > 15) continue;
+      const nx = this.found(rebel, x);
+      const followers = members.filter(f => f !== rebel && f !== holyR && dip.relOf(f, rebel) > dip.relOf(f, holyR) + 10);
+      for (const f of followers) { f.faith = nx.id; }
+      this.say(`Schism: ${rebel.name} broke with the priests of ${holyR.name} and founded ${nx.name}${followers.length ? `. ${followers.map(f => f.name).join(' and ')} followed` : ''}.`, 'bad', rebel);
+      G.chron.card('Schism', `${x.name} splits`, `${rebel.name} broke away to found ${nx.name}${followers.length ? `, taking ${followers.length} realm${followers.length > 1 ? 's' : ''} with it` : ''}.`, rebel);
+      dip.rel[key(rebel.id, holyR.id)] = (dip.rel[key(rebel.id, holyR.id)] || 0) - 25;
+    }
+    // faiths with no believers left fade from the world; a fallen holy city passes to the largest believer
+    for (const x of this.list) {
+      if (x.gone) continue;
+      const members = fs.filter(f => f.faith === x.id);
+      if (!members.length) { x.gone = true; this.say(`${x.name} faded away. No realm keeps its faith any more.`, ''); continue; }
+      const h = G.F(x.holy);
+      if (!h || h.gone || h.faith !== x.id) { const nh = members.sort((p, q) => q.pop - p.pop)[0]; x.holy = nh.id; }
+    }
+  }
+  toJSON() { return { list: this.list, nid: this.nid }; }
+}
+
 const Plague = {
   start(f, from) {
     f.plague = ri(9, 15); f.plagueDead = 0;
@@ -1522,11 +1651,44 @@ const EVENTS = [
 ];
 
 // ========== the game: owns the world and everything in it ==========
+// ---------- border history ----------
+// One snapshot of who holds what each season, at 2×2-tile cells, run-length encoded. It lives under its own
+// storage key so the main save stays small; old snapshots are thinned out once there are too many.
+const HIST_KEY = 'ember-vale-history-v1', HIST_MAX = 240, CELL = 2;
+class History {
+  constructor(d, seed) { this.seed = seed; this.snaps = d && d.seed === seed ? d.snaps || [] : []; }
+  capture() {
+    const W = G.world, cx0 = Math.floor(W.x0 / CELL), cy0 = Math.floor(W.y0 / CELL), cw = Math.ceil(W.w / CELL), ch = Math.ceil(W.h / CELL);
+    const realms = [], idx = new Map();
+    const runs = []; let last = -1, n = 0;
+    for (let cy = 0; cy < ch; cy++) for (let cx = 0; cx < cw; cx++) {
+      const T = W.tile((cx0 + cx) * CELL, (cy0 + cy) * CELL);
+      let o = 0;
+      if (T && T.own) {
+        if (!idx.has(T.own)) { const f = G.F(T.own); idx.set(T.own, realms.length + 1); realms.push(f ? [f.name, f.color, f.pop, f.age] : ['?', '#888', 0, 0]); }
+        o = idx.get(T.own);
+      }
+      if (o === last) n++; else { if (n) runs.push(last.toString(36) + '.' + n.toString(36)); last = o; n = 1; }
+    }
+    if (n) runs.push(last.toString(36) + '.' + n.toString(36));
+    this.snaps.push({ d: G.day, x: cx0, y: cy0, w: cw, h: ch, r: realms, m: runs.join(',') });
+    if (this.snaps.length > HIST_MAX) this.snaps = this.snaps.filter((s, i) => i >= this.snaps.length - HIST_MAX / 2 || i % 2 === 0);
+    this.save();
+  }
+  save() { try { localStorage.setItem(HIST_KEY, JSON.stringify({ seed: this.seed, snaps: this.snaps })); } catch (e) { } }
+  static load(seed) { let d = null; try { d = JSON.parse(localStorage.getItem(HIST_KEY) || 'null'); } catch (e) { } return new History(d, seed); }
+  static decode(s) {
+    const grid = new Uint8Array(s.w * s.h); let i = 0;
+    for (const run of s.m.split(',')) { const [o, n] = run.split('.').map(v => parseInt(v, 36)); grid.fill(o, i, i + n); i += n; }
+    return grid;
+  }
+}
+
 class Game {
   constructor() {
     this.v = 4; this.day = 1; this.t = 0; this.speed = 3; this.world = null;
     this.buildings = []; this.cols = []; this.factions = []; this.camps_ = [];
-    this.dip = new Diplomacy(); this.chron = new Chronicle();
+    this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths();
     this.nid = 1; this.evCd = 4; this.records = {}; this.over = false; this.startN = 3;
     this._b = null; this._bid = null; this._c = null; this._f = null; this._own = null;
   }
@@ -1625,7 +1787,9 @@ class Game {
     const W = this.world, n = W.w * W.h;
     if (!this._own || this._own.length !== n) this._own = new Float32Array(n);
     const best = this._own; best.fill(0);
-    for (const T of W.tiles) T.own = 0;
+    if (!this._prevOwn || this._prevOwn.length !== n) { this._prevOwn = new Int32Array(n).fill(-1); }
+    const prev = this._prevOwn;
+    for (let i = 0; i < n; i++) { prev[i] = W.tiles[i].own; W.tiles[i].own = 0; }
     for (const f of this.alive()) for (const p of f.centers()) {
       const R = Math.ceil(p.r);
       for (let y = Math.max(W.y0, p.y - R); y <= Math.min(W.y1 - 1, p.y + R); y++) for (let x = Math.max(W.x0, p.x - R); x <= Math.min(W.x1 - 1, p.x + R); x++) {
@@ -1648,7 +1812,11 @@ class Game {
       }
     }
     this.dip.contact = contact; this.dip.ver++;
-    W.touchAll();
+    // a realm becoming a town (and so drawing borders) or changing colour repaints everything once
+    const sig = this.alive().map(f => `${f.id}:${f.age >= 2 ? 1 : 0}:${f.color}`).join('|');
+    if (sig !== this._terrSig) { this._terrSig = sig; W.touchAll(); }
+    // otherwise only repaint the chunks where a border actually moved (and their neighbours, whose edge lines may change)
+    for (let i = 0; i < n; i++) if (W.tiles[i].own !== prev[i]) { const x = W.x0 + i % W.w, y = W.y0 + ((i / W.w) | 0); W.touch(x, y); W.touch(x - 1, y); W.touch(x + 1, y); W.touch(x, y - 1); W.touch(x, y + 1); }
   }
   // keep a margin of wild land around every realm and camp; the map grows to make room
   expand() {
@@ -1709,6 +1877,7 @@ class Game {
   daily() {
     this.day++;
     const se = this.season;
+    if (this.day % SEASON_DAYS === 1 && this.history) { this.recomputeTerritory(); this.history.capture(); }
     for (const f of this.alive()) f.daily();
     for (const T of this.world.tiles) {
       if (T.sap > 0 && !T.b && --T.sap === 0) { T.t = 1; T.amt = 20; }
@@ -1718,6 +1887,7 @@ class Game {
     this.expand();
     this.dip.daily();
     Plague.daily();
+    this.faiths.daily();
     Camp.spawnDaily();
     const total = this.cols.length;
     for (const c of this.camps()) c.daily(total);
@@ -1729,7 +1899,7 @@ class Game {
       this.growSide(this.nearestSide(big.cx, big.cy));
     }
     if (!this.alive().length) View.gameOver();
-    save();
+    if (this.day % 4 === 0 && !Away.active) save();   // a big world is ~0.5 MB of JSON: don't write it every day
   }
   step(dt) {
     this.t += dt; this.tick = (this.tick || 0) + 1;
@@ -1752,22 +1922,24 @@ class Game {
 
   // ---------- saving and loading ----------
   toJSON() {
-    return { v: 4, day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+    return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
+      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
-  static fresh(n) { const g = new Game(); G = g; g.setup(n); return g; }
+  static fresh(n) { const g = new Game(); G = g; g.setup(n); g.history = new History(null, g.world.seed); g.history.capture(); return g; }
   static load(d) {
     if (!d) return null;
     if (d.v === 3) return Game.migrate(d);
     if (d.v !== 4) return null;
     const g = new Game(); G = g;
     for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN']) g[k] = d[k];
+    g.savedAt = d.at || 0;
     g.world = World.from(d.world);
+    g.history = History.load(g.world.seed);
     g.buildings = d.buildings.map(b => new Building(b));
     g.cols = d.cols.map(c => new Colonist(c));
     g.factions = d.factions.map(f => new Settlement(f));
     g.camps_ = d.camps.map(c => new Camp(c));
-    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron);
+    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths);
     g.relink();
     return g;
   }
@@ -1776,6 +1948,7 @@ class Game {
     const g = new Game(); G = g;
     for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN']) g[k] = s[k];
     g.world = new World(Math.floor(rnd() * 1e9));
+    g.history = new History(null, g.world.seed);
     g.world.growTo(0, 0, 2, 3);
     s.tiles.forEach((o, i) => {
       const x = i % 40, y = (i / 40) | 0, T = new Tile(o.t, o.amt, o.h);
@@ -2145,7 +2318,8 @@ class Renderer {
   camTarget() {
     const W = G.world, z = UI.zoom;
     let b = null, fitWorld = false;
-    if (z && z.kind === 'f') { const f = G.F(z.id); if (f && !f.gone) b = Renderer.box(f.buildings, 2); else UI.zoom = null; }
+    if (Replay.active) { b = Replay.box(); fitWorld = true; }
+    else if (z && z.kind === 'f') { const f = G.F(z.id); if (f && !f.gone) b = Renderer.box(f.buildings, 2); else UI.zoom = null; }
     else if (z && z.kind === 'c') { const c = G.camps_.find(x => x.id === z.id); if (c && !c.gone) b = { x0: c.x - 4, y0: c.y - 4, x1: c.x + 5, y1: c.y + 5 }; else UI.zoom = null; }
     if (!b && UI.view === 'all') { b = { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
     if (!b) {
@@ -2168,7 +2342,7 @@ class Renderer {
   }
   drawLabels() {
     const ctx = this.ctx, cam = this.cam, kc = this.cv.width / cam.w / this.dpr, cw = this.cv.width / this.dpr, chh = this.cv.height / this.dpr;
-    const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, sel: f.id === UI.sel }; })
+    const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, ring: f.faith ? (G.faiths.get(f.faith) || {}).color : '', sel: f.id === UI.sel }; })
       .concat(G.camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })));
     ctx.font = `700 ${kc > 20 ? 12 : 10.5}px Figtree, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const it of items) {
@@ -2180,6 +2354,7 @@ class Renderer {
       ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(sx - w / 2, sy - 9, w, 18, 9); else ctx.rect(sx - w / 2, sy - 9, w, 18); ctx.fill();
       if (it.sel) { ctx.strokeStyle = it.dot; ctx.lineWidth = 1.5; ctx.stroke(); }
       ctx.fillStyle = it.dot; ctx.beginPath(); ctx.arc(sx - w / 2 + 9, sy, 3.5, 0, 7); ctx.fill();
+      if (it.ring) { ctx.strokeStyle = it.ring; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx - w / 2 + 9, sy, 5.6, 0, 7); ctx.stroke(); }
       ctx.fillStyle = it.col; ctx.fillText(it.text, sx + 5, sy + 0.5);
     }
     ctx.textBaseline = 'alphabetic';
@@ -2197,6 +2372,7 @@ class Renderer {
     ctx.fillStyle = '#24331f'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(k, 0, 0, k, -cam.x * k, -cam.y * k);
     this.drawTerrain(now, k);
+    if (Replay.active) { Replay.draw(ctx, cam, k, dpr); return; }
     const vx0 = cam.x - 2, vy0 = cam.y - 2, vx1 = cam.x + cam.w + 2, vy1 = cam.y + cam.h + 2;
     const inView = o => o.x >= vx0 && o.x <= vx1 && o.y >= vy0 && o.y <= vy1;
     const sorted = G.buildings.filter(b => !b.built && inView(b)).sort((p, q) => p.y - q.y);
@@ -2436,7 +2612,7 @@ class Interface {
       const why = (f.moodWhy || []).join(', ');
       const rels = G.alive().filter(o => o !== f).map(o => `${STANCE[G.dip.stanceOf(f, o)].toLowerCase()} with ${o.name}`).join('; ');
       const reign = Math.floor(f.ruler.years);
-      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}`;
+      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
       for (const k of Object.keys(JOBS)) {
         const n = f.people.filter(o => o.job === k).length;
         $('n-' + k).textContent = n;
@@ -2459,6 +2635,11 @@ class Interface {
         rows.push(`<div class="rel"><span class="who"><i style="background:${a.color}"></i>${a.name} · <i style="background:${b.color}"></i>${b.name}</span><span class="relbar"><i style="left:${left}%;width:${width}%;background:${col}"></i></span><span class="chip ${st === 'war' ? 'war' : st === 'ally' ? 'ally' : 'peace'}">${STANCE[st]}${G.dip.isOpen(a, b) && st !== 'war' ? ' · open' : ''}</span></div>`);
       }
       this.setHtml('rels', rows.length ? rows.join('') : '<div class="steward">Only one settlement stands. Relations begin when a second one is founded.</div>');
+      const faiths = G.faiths.list.filter(x => !x.gone).map(x => {
+        const ms = fs.filter(o => o.faith === x.id), h = G.F(x.holy);
+        return { x, ms, pop: ms.reduce((n, o) => n + o.pop, 0), h };
+      }).filter(r => r.ms.length).sort((p, q) => q.pop - p.pop);
+      this.setHtml('faiths', faiths.length ? faiths.map(r => `<div class="faith"><span class="who"><i style="background:${r.x.color}"></i>${r.x.name}</span><span class="tp">${r.pop} faithful in ${r.ms.length} realm${r.ms.length > 1 ? 's' : ''}${r.h ? ` · holy city ${r.h.name}` : ''}</span></div>`).join('') : '<div class="steward">No faith yet. The first realm to build a chapel will found one.</div>');
       if (G.chron.dirty) {
         const ul = $('pollog'); ul.textContent = '';
         for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border/.test(e.text)).slice(0, 12)) {
@@ -2498,10 +2679,139 @@ class Interface {
 
 // What the simulation is allowed to ask of the page.
 const View = {
-  toast: (t, k) => UI.toast(t, k),
-  float: (x, y, t, c) => R.float(x, y, t, c),
+  toast: (t, k) => { if (!Away.active) UI.toast(t, k); },
+  float: (x, y, t, c) => { if (!Away.active) R.float(x, y, t, c); },
   forgetWalkers: k => { delete R.walkers[k]; },
   gameOver: () => UI.gameOver(),
+};
+
+// ========== while you were away ==========
+// When the vale is reopened (or the tab comes back), the world catches up on the time you were gone,
+// at the speed you left it on, up to one year, then sums up what changed.
+const AWAY_MAX = YEAR * DAY;   // one game year, in game seconds
+const Away = {
+  active: false,
+  start(realSecs) {
+    if (!G || G.over || !G.speed || this.active) return;
+    const total = Math.min(realSecs * G.speed, AWAY_MAX);
+    if (total < DAY) return;
+    this.active = true; this.stop = false; this.left = total; this.total = total;
+    this.day0 = G.day; this.before = new Map(G.alive().map(f => [f.id, { name: f.name, pop: f.pop, age: f.age }]));
+    $('awt').textContent = 'While you were away';
+    $('awsub').textContent = `Catching up on ${Math.round(total / DAY)} days…`;
+    $('awbody').innerHTML = ''; $('awbarbox').hidden = false; $('awbar').style.width = '0';
+    $('awstop').hidden = false; $('awok').hidden = true; $('away').hidden = false;
+    setTimeout(() => this.slice(), 30);
+  },
+  // simulate in ~30 ms slices so the page stays responsive and the bar moves
+  slice() {
+    const t0 = performance.now();
+    while (this.left > 0 && !G.over && !this.stop && performance.now() - t0 < 30) { const d = Math.min(0.4, this.left); G.step(d); this.left -= d; }
+    $('awbar').style.width = `${Math.round((1 - this.left / this.total) * 100)}%`;
+    $('awsub').textContent = `Catching up: Year ${G.year}, ${SEASONS[G.season]}…`;
+    if (this.left > 0 && !G.over && !this.stop) { setTimeout(() => this.slice(), 0); return; }
+    this.finish();
+  },
+  finish() {
+    const days = G.day - this.day0, ch = G.chron;
+    ch.cards.length = 0; R.reset(); UI.html = {};
+    $('awt').textContent = days ? `${days} day${days === 1 ? '' : 's'} passed` : 'Nothing happened';
+    $('awsub').textContent = `It is now Year ${G.year}, ${SEASONS[G.season].toLowerCase()}.` + (this.stop ? ' You stopped the catch-up early.' : '');
+    const realms = [];
+    for (const [id, b] of this.before) {
+      const f = G.F(id);
+      if (!f || f.gone) { realms.push({ c: f ? f.color : '', t: `${b.name} is gone.` }); continue; }
+      const bits = [];
+      if (f.age > b.age) bits.push(`rose to ${an(AGES[f.age].name.toLowerCase())}`);
+      else if (f.age < b.age) bits.push(`fell back to ${an(AGES[f.age].name.toLowerCase())}`);
+      if (Math.abs(f.pop - b.pop) >= 5) bits.push(`${f.pop > b.pop ? 'grew' : 'shrank'} from ${b.pop} to ${f.pop} people`);
+      realms.push({ c: f.color, t: bits.length ? `${f.name} ${bits.join(' and ')}.` : `${f.name} held steady at ${f.pop} ${f.pop === 1 ? 'person' : 'people'}.`, quiet: !bits.length });
+    }
+    for (const f of G.alive()) if (!this.before.has(f.id)) realms.push({ c: f.color, t: `${f.name} was founded and now has ${f.pop} ${f.pop === 1 ? 'person' : 'people'}.` });
+    realms.sort((p, q) => (p.quiet ? 1 : 0) - (q.quiet ? 1 : 0));   // what changed first
+    const big = ch.history.filter(e => e.d > this.day0 && e.k !== 'age').slice(0, 10).reverse();
+    const li = (c, t) => `<li><i style="${c ? `background:${c}` : ''}"></i><span>${t}</span></li>`;
+    const esc = s => s.replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+    $('awbody').innerHTML = `<h3>The realms</h3><ul>${realms.map(r => li(r.c, esc(r.t))).join('')}</ul>` +
+      (big.length ? `<h3>The chronicle</h3><ul>${big.map(e => li(e.c, `Year ${e.y}: ${esc(e.text)}`)).join('')}</ul>` : '');
+    $('awbarbox').hidden = true; $('awstop').hidden = true; $('awok').hidden = false;
+    this.active = false;
+    save();
+    if (G.over) UI.gameOver();
+  },
+  wire() {
+    $('awstop').addEventListener('click', () => { this.stop = true; });
+    $('awok').addEventListener('click', () => { $('away').hidden = true; });
+  },
+};
+
+// ========== border replay ==========
+// Scrub or play back through the seasonal border snapshots. The simulation waits while it is open.
+const Replay = {
+  active: false, i: 0, playing: false, cache: null,
+  open() {
+    const S = G.history.snaps;
+    if (!S.length) return;
+    this.active = true; this.playing = false; this.i = S.length - 1; this.cache = null;
+    const sl = $('rpslider'); sl.max = S.length - 1; sl.value = this.i;
+    $('replay').hidden = false; $('meter').hidden = true; $('rpplay').textContent = '▶'; $('mapbox').classList.add('replaying');
+    this.label(); R.cam = null;
+    $('mapbox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  },
+  close() { this.active = false; this.playing = false; $('replay').hidden = true; $('meter').hidden = false; $('mapbox').classList.remove('replaying'); R.cam = null; },
+  label() { const s = G.history.snaps[this.i], y = Math.floor((s.d - 1) / YEAR) + 1, se = Math.floor(((s.d - 1) % YEAR) / SEASON_DAYS); $('rpwhen').textContent = `Year ${y} · ${SEASONS[se]}`; },
+  // one canvas pixel per cell, plus where to put each realm's name
+  snap() {
+    if (this.cache && this.cache.i === this.i) return this.cache;
+    const s = G.history.snaps[this.i], grid = History.decode(s), cv = document.createElement('canvas');
+    cv.width = s.w; cv.height = s.h;
+    const g = cv.getContext('2d'), img = g.createImageData(s.w, s.h), sums = s.r.map(() => [0, 0, 0]);
+    const rgb = s.r.map(r => [1, 3, 5].map(o => parseInt(r[1].slice(o, o + 2), 16)));
+    for (let i = 0; i < grid.length; i++) {
+      const o = grid[i], p = i * 4;
+      if (!o) { img.data[p + 3] = 0; continue; }
+      const c = rgb[o - 1]; img.data[p] = c[0]; img.data[p + 1] = c[1]; img.data[p + 2] = c[2]; img.data[p + 3] = 200;
+      const sm = sums[o - 1]; sm[0] += i % s.w; sm[1] += (i / s.w) | 0; sm[2]++;
+    }
+    g.putImageData(img, 0, 0);
+    const labels = s.r.map((r, j) => ({ name: r[0], color: r[1], pop: r[2], n: sums[j][2], x: (s.x + sums[j][0] / Math.max(1, sums[j][2]) + 0.5) * CELL, y: (s.y + sums[j][1] / Math.max(1, sums[j][2]) + 0.5) * CELL })).filter(l => l.n >= 3);
+    return (this.cache = { i: this.i, cv, s, labels });
+  },
+  box() { const s = G.history.snaps[this.i]; return { x0: s.x * CELL, y0: s.y * CELL, x1: (s.x + s.w) * CELL, y1: (s.y + s.h) * CELL }; },
+  draw(ctx, cam, k, dpr) {
+    const c = this.snap(), s = c.s;
+    ctx.fillStyle = 'rgba(16,14,10,.45)'; ctx.fillRect(cam.x - 1, cam.y - 1, cam.w + 2, cam.h + 2);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(c.cv, s.x * CELL, s.y * CELL, s.w * CELL, s.h * CELL);
+    ctx.imageSmoothingEnabled = true;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const kc = k / dpr;
+    ctx.font = '700 11px Figtree, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const l of c.labels) {
+      const t = `${l.name} · ${l.pop}`, w = ctx.measureText(t).width + 12, sx = (l.x - cam.x) * kc, sy = (l.y - cam.y) * kc;
+      ctx.fillStyle = 'rgba(18,14,8,.78)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(sx - w / 2, sy - 9, w, 18, 9); else ctx.rect(sx - w / 2, sy - 9, w, 18); ctx.fill();
+      ctx.fillStyle = '#ffffff'; ctx.fillText(t, sx, sy + 0.5);
+    }
+    ctx.textBaseline = 'alphabetic';
+  },
+  tick(rdt) {
+    if (!this.active || !this.playing) return;
+    this.acc = (this.acc || 0) + rdt;
+    if (this.acc < 0.35) return;
+    this.acc = 0;
+    if (this.i >= G.history.snaps.length - 1) { this.playing = false; $('rpplay').textContent = '▶'; return; }
+    this.i++; $('rpslider').value = this.i; this.label();
+  },
+  wire() {
+    $('rpopen').addEventListener('click', () => this.open());
+    $('rpdone').addEventListener('click', () => this.close());
+    $('rpslider').addEventListener('input', e => { this.i = +e.target.value; this.playing = false; $('rpplay').textContent = '▶'; this.label(); });
+    $('rpplay').addEventListener('click', () => {
+      if (this.playing) { this.playing = false; $('rpplay').textContent = '▶'; return; }
+      if (this.i >= G.history.snaps.length - 1) { this.i = 0; $('rpslider').value = 0; this.label(); }
+      this.playing = true; $('rpplay').textContent = '❚❚';
+    });
+  },
 };
 
 // ========== boot and the main loop ==========
@@ -2510,7 +2820,7 @@ const UI = new Interface();
 function restart(n) {
   $('modal').hidden = true; $('setup').hidden = true; UI.overTimer = 0;
   Game.fresh(n || (G && G.startN) || 3);
-  R.reset(); UI.reset(); save(); UI.setSpeed(3); UI.refresh();
+  Replay.close(); R.reset(); UI.reset(); save(); UI.setSpeed(3); UI.refresh();
 }
 let last = performance.now(), uiAcc = 0;
 // frame meter: frames per second, the slowest frame, and how long the simulation and the drawing took per frame
@@ -2539,7 +2849,7 @@ function frame(now) {
   const gap = now - last, rdt = Math.min(0.1, gap / 1000); last = now;
   const t0 = performance.now();
   let ran = 0;
-  if (!G.over && G.speed > 0 && $('setup').hidden) {
+  if (!G.over && G.speed > 0 && $('setup').hidden && !Away.active && !Replay.active) {
     // never spend more than ~10 ms a frame simulating: on a slow phone the world runs a little slower
     // instead of each late frame demanding even more catch-up work the next frame
     let dt = rdt * G.speed;
@@ -2549,6 +2859,7 @@ function frame(now) {
   R.draw(rdt, now);
   meter.add(gap, t1 - t0, performance.now() - t1, ran);
   UI.tick(rdt);
+  Replay.tick(rdt);
   uiAcc += rdt;
   if (uiAcc > 0.3) { uiAcc = 0; UI.refresh(); }
   requestAnimationFrame(frame);
@@ -2567,12 +2878,20 @@ function start(data) {
   UI.refresh();
   if (fresh) UI.openSetup(false);
   if (G.over) UI.gameOver();
+  Away.wire();
+  Replay.wire();
+  if (!fresh && G.savedAt) Away.start((Date.now() - G.savedAt) / 1000);
   requestAnimationFrame(t => { last = t; frame(t); });
 }
 window.addEventListener('resize', () => R.resize());
-document.addEventListener('visibilitychange', () => { if (document.hidden && G) save(); });
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (!G) return;
+  if (document.hidden) { hiddenAt = Date.now(); if (!Away.active) save(); }
+  else if (hiddenAt) { const s = (Date.now() - hiddenAt) / 1000; hiddenAt = 0; if (s > 20) Away.start(s); }
+});
 window.claude?.hot?.snapshot?.(() => ({ save: JSON.stringify(G) }));
-window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter };
+window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter, Away, Replay };
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
 </script>
