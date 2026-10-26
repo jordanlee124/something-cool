@@ -118,7 +118,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .daily[open] summary { margin-bottom: 6px; }
 
 .drawer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
 .tabs button { background: transparent; border: 0; color: var(--muted); font: 600 0.9rem var(--f-body); padding: 12px 6px; cursor: pointer; }
 .tabs button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -3px 0 var(--accent); }
 .pane { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -197,6 +197,20 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .sheet button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 .selname { font-family: var(--f-display); font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
 .selname i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.tree { display: flex; flex-direction: column; gap: 12px; }
+.era h3 { font: 400 1rem var(--f-display); margin: 0 0 6px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.era h3 small { font: 600 0.72rem var(--f-body); color: var(--muted); text-align: right; }
+.era h3 small.here { color: var(--accent); }
+.era .ts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tech { font-size: 0.78rem; border: 1px dashed var(--line); border-radius: 8px; padding: 6px 8px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tech b { font-weight: 700; }
+.tech span { font-size: 0.7rem; line-height: 1.3; }
+.tech.known { border: 1px solid var(--good); color: var(--ink); }
+.tech.now { border: 1px solid var(--accent); color: var(--ink); }
+.tech .dots { display: flex; flex-wrap: wrap; gap: 3px; min-height: 7px; }
+.tech .dots i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.tbar { height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.tbar i { display: block; height: 100%; background: var(--accent); }
 </style>
 </head>
 <body>
@@ -245,6 +259,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-realm" aria-selected="true">Realm</button>
       <button role="tab" id="tab-pol" aria-selected="false">Politics</button>
+      <button role="tab" id="tab-tech" aria-selected="false">Tech</button>
       <button role="tab" id="tab-log" aria-selected="false">Chronicle</button>
     </div>
     <div class="pane" id="pane-realm">
@@ -266,6 +281,11 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
       <div class="sites" id="rels"></div>
       <div class="sub">Recent politics</div>
       <ul class="log" id="pollog"></ul>
+    </div>
+    <div class="pane" id="pane-tech" hidden>
+      <div class="sub">Every realm studies on its own · tap one to see its tree</div>
+      <div class="sites" id="techrealms"></div>
+      <div class="tree" id="tree"></div>
     </div>
     <div class="pane" id="pane-log" hidden>
       <div class="miles" id="miles"></div>
@@ -371,6 +391,49 @@ const GREATS = {
   merchant:  { what: 'merchant',  eps: ['Goldhand', 'the Rich', 'Silvertongue', 'the Broker'], does: 'richer caravans' },
   architect: { what: 'architect', eps: ['the Mason', 'Stonewise', 'the Builder of Towers', 'Plumbline'], does: 'faster building' },
 };
+// the tech tree: seven eras, four discoveries each. A realm can study an era's techs once it knows two from the era before.
+const ERAS = ['Tribal Era', 'Bronze Age', 'Iron Age', 'Medieval Era', 'Renaissance', 'Industrial Era', 'Modern Era'];
+const TECHS = {
+  stone:     { era: 0, name: 'Stone Tools',       fx: { work: 0.1 },             does: 'quicker woodcutting and quarrying' },
+  pottery:   { era: 0, name: 'Pottery',           fx: { cap: 30 },               does: 'bigger stores' },
+  herding:   { era: 0, name: 'Herding',           fx: { farm: 1 },               does: 'more food from each field' },
+  lore:      { era: 0, name: 'Oral Tradition',    fx: { sci: 0.15 },             does: 'faster learning' },
+  agri:      { era: 1, name: 'Agriculture',       fx: { farm: 1 },               does: 'richer harvests' },
+  bronze:    { era: 1, name: 'Bronze Working',    fx: { mil: 0.15 },             does: 'a stronger army' },
+  wheel:     { era: 1, name: 'The Wheel',         fx: { cart: 0.3 },             does: 'faster caravans' },
+  writing:   { era: 1, name: 'Writing',           fx: { sci: 0.2 },              does: 'faster learning' },
+  iron:      { era: 2, name: 'Iron Working',      fx: { mil: 0.2, work: 0.1 },   does: 'a stronger army and better tools' },
+  masonry:   { era: 2, name: 'Masonry',           fx: { build: 0.2 },            does: 'faster building' },
+  coin:      { era: 2, name: 'Currency',          fx: { goods: 0.3 },            does: 'richer trade' },
+  philo:     { era: 2, name: 'Philosophy',        fx: { mood: 3, sci: 0.15 },    does: 'a calmer people and faster learning' },
+  feudal:    { era: 3, name: 'Feudalism',         fx: { mil: 0.25 },             does: 'a stronger army' },
+  rotation:  { era: 3, name: 'Crop Rotation',     fx: { farm: 1 },               does: 'richer harvests' },
+  engineer:  { era: 3, name: 'Engineering',       fx: { build: 0.25 },           does: 'faster building and wonders' },
+  theology:  { era: 3, name: 'Theology',          fx: { mood: 3 },               does: 'a more content people' },
+  printing:  { era: 4, name: 'Printing Press',    fx: { sci: 0.3 },              does: 'faster learning' },
+  gunpowder: { era: 4, name: 'Gunpowder',         fx: { mil: 0.4 },              does: 'a far stronger army' },
+  banking:   { era: 4, name: 'Banking',           fx: { cap: 100, goods: 0.3 },  does: 'bigger stores and richer trade' },
+  navigation:{ era: 4, name: 'Navigation',        fx: { fish: 1, cart: 0.2 },    does: 'better fishing and faster caravans' },
+  steam:     { era: 5, name: 'Steam Power',       fx: { work: 0.25, build: 0.25 }, does: 'machines that speed up work and building' },
+  rail:      { era: 5, name: 'Railways',          fx: { cart: 0.8 },             does: 'trains on the trade roads' },
+  medicine:  { era: 5, name: 'Medicine',          fx: { health: 0.5, growth: 0.3 }, does: 'milder plagues and more births' },
+  factory:   { era: 5, name: 'Factories',         fx: { cap: 150, goods: 0.4 },  does: 'bigger stores and richer trade' },
+  electric:  { era: 6, name: 'Electricity',       fx: { mood: 4, sci: 0.3 },     does: 'lit streets and faster learning' },
+  auto:      { era: 6, name: 'Automobiles',       fx: { walk: 0.25, cart: 0.6 }, does: 'trucks on the roads and quicker people' },
+  tanks:     { era: 6, name: 'Mechanized Warfare', fx: { mil: 0.6 },             does: 'armies of tanks' },
+  computers: { era: 6, name: 'Computers',         fx: { sci: 0.4, build: 0.3 },  does: 'faster learning and building' },
+};
+const TECH_COST = [60, 150, 380, 850, 1600, 2700, 4200];
+// how each era's buildings look: walls, roofs, lit windows
+const ERA_LOOK = [
+  { wall: '#9a6b44', roof: '#6e5a2c', win: '#e0a94a' },
+  { wall: '#c8a46e', roof: '#8a6a3a', win: '#e8b75a' },
+  { wall: '#b98f62', roof: '#7a4a2a', win: '#f0c75a' },
+  { wall: '#c9a57a', roof: '#8a3a28', win: '#f0c75a' },
+  { wall: '#e6dcc6', roof: '#b5533a', win: '#f4d27a' },
+  { wall: '#9c4a36', roof: '#4b4f57', win: '#f6dc8a' },
+  { wall: '#cfd5da', roof: '#5d7a95', win: '#bfe3f5' },
+];
 const HOUSING = ['tc', 'hut', 'house', 'manor'];
 const LANDMARKS = ['chapel', 'market', 'cathedral', 'castle', 'palace'];
 const FACTION_NAMES = ['Thornbury', 'Greywater', 'Oakhurst', 'Larkspur', 'Ravensby', 'Millhaven', 'Stonebridge', 'Kestrel Hill', 'Ashford', 'Hollowell', 'Wyndham', 'Fallowmere', 'Corrowmere', 'Brackenhold', 'Northcombe', 'Eastwick', 'Dunhallow', 'Ironbrook',
@@ -725,7 +788,7 @@ class Colonist {
       const T = G.world.tile(this.tx, this.ty), want = this.job === 'woodcutter' ? 1 : 2;
       if (!T || T.t !== want || T.amt <= 0 || (T.own && T.own !== f.id)) return quit();
       this.wt += dt;
-      if (this.wt >= (want === 1 ? 5 : 6)) {
+      if (this.wt * (1 + f.fx('work')) >= (want === 1 ? 5 : 6)) {
         const n = Math.min((want === 1 ? 3 : 2) + (f.age >= 3 ? 1 : 0), T.amt);
         T.amt -= n;
         if (T.amt <= 0) { T.t = 0; T.amt = 0; if (want === 1) T.sap = ri(10, 16); }
@@ -736,7 +799,7 @@ class Colonist {
     } else if (this.job === 'builder') {
       const b = G.byId(this.tid);
       if (!b || b.built || b.f !== f.id || !b.onHome) return quit();
-      b.prog += dt * (f.hasGreat('architect') ? 1.5 : 1);
+      b.prog += dt * (f.hasGreat('architect') ? 1.5 : 1) * (1 + f.fx('build'));
       if (b.prog >= BUILD[b.type].time) {
         b.built = true; delete b.from;
         if (b.type === 'wonder') {
@@ -760,7 +823,7 @@ class Colonist {
   }
   update(dt) {
     if (this.path.length) {
-      let move = SPEED * (this.home.age >= 3 ? 1.15 : 1) * dt;
+      let move = SPEED * (this.home.age >= 3 ? 1.15 : 1) * (1 + this.home.fx('walk')) * dt;
       while (move > 0 && this.path.length) {
         const n = this.path[0], dx = n.x - this.x, dy = n.y - this.y, d = Math.hypot(dx, dy);
         if (d <= move) {
@@ -983,6 +1046,10 @@ class Settlement {
     if (this.note === undefined) this.note = typeof steward === 'string' ? steward : '';
     if (this.ruler && !(this.ruler instanceof Ruler)) this.ruler = new Ruler(this.ruler);
     if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
+    if (!this.techs) {   // saves from before the tech tree: credit older realms with the early eras
+      const n = Math.floor((this.age + 1) / 2);
+      this.techs = Object.keys(TECHS).filter(t => TECHS[t].era < n); this.study = null; this.sci = 0;
+    }
   }
   static found(name, x, y, parent) {
     const used = new Set(G.factions.map(f => f.name));
@@ -992,7 +1059,8 @@ class Settlement {
     const f = new Settlement({ id: G.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10 }, mood: 62, grief: 0, moodWhy: [],
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
       stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
-      culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40 });
+      culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40,
+      techs: parent ? parent.techs.slice() : [], study: null, sci: 0 });
     f.ruler = Ruler.crown(f);
     return f;
   }
@@ -1005,7 +1073,7 @@ class Settlement {
   anyCount(type) { let n = 0; for (const b of this.buildings) if (b.type === type) n++; return n; }
   get housing() { return this.buildings.reduce((n, b) => n + b.houses, 0); }
   get futureHousing() { return this.buildings.reduce((n, b) => n + (BUILD[b.type].house || 0), 0); }
-  get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age; }
+  get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age + this.fx('cap'); }
   get drops() {
     if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store') && b.onHome); }
     return this._drops;
@@ -1015,9 +1083,77 @@ class Settlement {
     for (const b of this.drops) { if (ok && !ok(b)) continue; const d = Math.abs(b.x - x) + Math.abs(b.y - y); if (d < bd) { bd = d; best = b; } }
     return best;
   }
-  get military() { return Math.floor((this.buildings.reduce((n, b) => n + (b.built ? BUILD[b.type].def || 0 : 0), 0) + Math.floor(this.pop / 6)) * (this.hasGreat('general') ? 1.3 : 1)) + (this.hasWonder('wall') ? 30 : 0); }
+  get military() { return Math.floor((this.buildings.reduce((n, b) => n + (b.built ? BUILD[b.type].def || 0 : 0), 0) + Math.floor(this.pop / 6)) * (this.hasGreat('general') ? 1.3 : 1) * (1 + this.fx('mil'))) + (this.hasWonder('wall') ? 30 : 0); }
   hasWonder(k) { return this.buildings.some(b => b.type === 'wonder' && b.built && b.wk === k); }
   hasGreat(k) { return !!(this.great && this.great.kind === k); }
+  // --- the tech tree ---
+  // everything a realm has learned, summed once per new discovery
+  techFx() {
+    const ts = this.techs || (this.techs = []);
+    if (this._fxn !== ts.length) {
+      const o = { era: 0 };
+      for (const t of ts) { const T = TECHS[t]; if (!T) continue; o.era = Math.max(o.era, T.era); for (const k in T.fx) o[k] = (o[k] || 0) + T.fx[k]; }
+      this._fx = o; this._fxn = ts.length;
+    }
+    return this._fx;
+  }
+  fx(k) { return this.techFx()[k] || 0; }
+  get era() { return this.techFx().era; }
+  knows(t) { return this.techs.includes(t); }
+  canStudy(t) {
+    const T = TECHS[t];
+    if (this.knows(t)) return false;
+    return !T.era || this.techs.filter(x => TECHS[x].era === T.era - 1).length >= 2;
+  }
+  // ideas travel: a tech is cheaper to learn when a neighbour, ally or trade partner already knows it
+  techNear(t) {
+    return G.alive().some(o => o !== this && o.knows(t) && ((G.dip.contact[key(this.id, o.id)] || 0) > 0 || G.dip.stanceOf(this, o) === 'ally' || G.trade.routes.some(r => (r.a === this.id && r.b === o.id) || (r.b === this.id && r.a === o.id))));
+  }
+  techCost(t) { return Math.round(TECH_COST[TECHS[t].era] * (this._near ? 0.65 : 1)); }
+  get sciRate() {
+    return (1.5 + this.pop * 0.045) * (1 + this.fx('sci')) * (this.hasWonder('library') ? 1.4 : 1) * (this.hasGreat('scholar') ? 1.3 : 1) * clamp(this.mood / 60, 0.6, 1.3);
+  }
+  // the steward picks what to study next: unfinished business from earlier eras first, then what the realm needs
+  pickStudy() {
+    const open = Object.keys(TECHS).filter(t => this.canStudy(t));
+    if (!open.length) { this.study = null; return; }
+    const war = this.enemies.length || this.campsNear(16).length, hungry = this.res.food < this.pop * 3;
+    const w = open.map(t => {
+      const T = TECHS[t];
+      let v = 1 + (T.era < this.era ? 3 : 0);
+      if (war && T.fx.mil) v += 3;
+      if (hungry && (T.fx.farm || T.fx.fish)) v += 3;
+      if (this.builtCount('market') && (T.fx.goods || T.fx.cart)) v += 1;
+      if (T.fx.sci) v += 1;
+      return v;
+    });
+    let r = rnd() * w.reduce((n, v) => n + v, 0);
+    this.study = open[open.length - 1];
+    for (let i = 0; i < open.length; i++) if ((r -= w[i]) <= 0) { this.study = open[i]; break; }
+    this._near = this.techNear(this.study);
+  }
+  research() {
+    if (!this.study || this.knows(this.study)) { this.sci = 0; this.pickStudy(); if (!this.study) return; }
+    if (G.day % 8 === 0) this._near = this.techNear(this.study);
+    this.sci = (this.sci || 0) + this.sciRate;
+    if (this.sci >= this.techCost(this.study)) this.learn([this.study], 'discovered');
+  }
+  // learn one or more techs at once (a discovery, or the spoils of a conquest) and mark a new era
+  learn(list, how) {
+    const was = this.era, C = G.chron, got = list.filter(t => TECHS[t] && !this.knows(t));
+    if (!got.length) return;
+    this.techs.push(...got); this.sci = 0; this.study = null;
+    const names = got.map(t => TECHS[t].name);
+    C.note(`${this.name} ${how} ${names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : `${names[0]}, which brings ${TECHS[got[0]].does}`}.`, 'good');
+    const e = this.era;
+    if (e <= was) return;
+    const recs = G.eraFirst || (G.eraFirst = {}), first = !recs[e], nm = ERAS[e];
+    if (first) recs[e] = { n: this.name, d: G.day, c: this.color };
+    C.record(`${this.name} entered the ${nm}${first ? ', the first realm in the world to get there' : ''}.`, 'age', this);
+    if (first) C.card('First in the world', `${this.name} enters the ${nm}`, `${TECHS[got[got.length - 1]].name} opens a new era. Its buildings, roads and armies change with it.`, this);
+    View.toast(`${this.name} entered the ${nm}`, 'good');
+    G.world.touchAll();   // paths and buildings take on the new era's look
+  }
   get defense() { return this.military + G.alive().reduce((n, o) => n + (o !== this && G.dip.stanceOf(this, o) === 'ally' ? Math.floor(o.military / 3) : 0), 0); }
   get enemies() { return G.alive().filter(o => o !== this && G.dip.stanceOf(this, o) === 'war'); }
   get allies() { return G.alive().filter(o => o !== this && G.dip.stanceOf(this, o) === 'ally'); }
@@ -1029,10 +1165,10 @@ class Settlement {
   get title() { return this.ruler.title(this.age); }
   get rulerName() { return this.ruler.fullName; }
   farmYield(b) {
-    if (b.type === 'dock') return 2 + (this.age >= 3 ? 1 : 0);
+    if (b.type === 'dock') return 2 + (this.age >= 3 ? 1 : 0) + this.fx('fish');
     const se = G.season;
-    if (se === 3) return this.hasWonder('gardens') ? 2 : 1;
-    return 3 + (se === 2 ? 1 : 0) + (this.age >= 2 ? 1 : 0) + (this.age >= 4 ? 1 : 0) + (this.hasWonder('gardens') ? 1 : 0);
+    if (se === 3) return (this.hasWonder('gardens') ? 2 : 1) + Math.floor(this.fx('farm') / 2);
+    return 3 + (se === 2 ? 1 : 0) + (this.age >= 2 ? 1 : 0) + (this.age >= 4 ? 1 : 0) + (this.hasWonder('gardens') ? 1 : 0) + this.fx('farm');
   }
   centers() {
     const r = RADIUS[this.age] + Math.min(2, this.buildings.length / 40);
@@ -1107,6 +1243,7 @@ class Settlement {
     if (this.hasWonder('library')) { m += 6; why.push('the Great Library'); }
     if (this.hasWonder('arena')) { m += 5; why.push('games in the Arena'); }
     if (this.hasGreat('scholar')) { m += 5; why.push(`the scholar ${this.great.name}`); }
+    const tm = this.fx('mood'); if (tm) { m += tm; why.push(`the comforts of the ${ERAS[this.era].replace(' Era', '').toLowerCase()} age`); }
     return { m: clamp(m, 0, 100), why };
   }
   // --- one day in the life of the settlement ---
@@ -1115,6 +1252,7 @@ class Settlement {
     if (!this.pop) { this.fall('was abandoned. Its last people are gone'); return; }
     this.greatDaily();
     this.milestones();
+    this.research();
     let hungry = 0, starved = 0;
     for (const c of shuffle(this.people.slice())) {
       if (this.res.food >= 1) { this.res.food--; c.hun = 0; } else { c.hun++; hungry++; if (c.hun >= 3) { G.kill(c); starved++; } }
@@ -1133,7 +1271,7 @@ class Settlement {
     const pop = this.pop, spare = this.housing - pop;
     const room = pop < POPCAP[this.age] && G.cols.length < WORLD_CAP && !this.plague;
     if (room && pop >= 2 && spare > 0 && this.res.food >= pop * 1.5 && se !== 3) {
-      const rate = 0.012 + 0.006 * this.builtCount('chapel') + 0.008 * this.builtCount('cathedral') + 0.008 * this.builtCount('palace');
+      const rate = (0.012 + 0.006 * this.builtCount('chapel') + 0.008 * this.builtCount('cathedral') + 0.008 * this.builtCount('palace')) * (1 + this.fx('growth'));
       const n = Math.min(spare, Math.floor(pop * rate * moodK + rnd()));
       for (let i = 0; i < n; i++) { this.spawn(null); this.stats.born++; }
     }
@@ -1578,6 +1716,7 @@ class Diplomacy {
     for (const k of ['food', 'wood', 'stone']) a.res[k] = Math.min(a.cap, a.res[k] + Math.floor(b.res[k] / 2));
     G.dirtyB(); G.dirtyC();
     b.gone = true;
+    a.learn(b.techs || [], `took the knowledge of ${b.name}:`);
     a.grief += 2;
     G.chron.note(`${a.name} conquered ${b.name}. Its ${ppl} now answer${n === 1 ? 's' : ''} to ${a.name}.`, 'bad');
     const kin = b.parent === a.id || a.parent === b.id;
@@ -1730,21 +1869,21 @@ class Trade {
     }
     for (const r of this.routes) {
       const n = this.caravans.filter(c => c.r === r).length;
-      if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5; this.caravans.push({ r, from: back ? r.b : r.a, to: back ? r.a : r.b, back, d: 0 }); }
+      if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5, from = back ? r.b : r.a, fr = G.F(from); this.caravans.push({ r, from, to: back ? r.a : r.b, back, d: 0, sp: 1 + (fr ? fr.fx('cart') : 0), era: fr ? fr.era : 0 }); }
     }
   }
   step(dt) {
     for (const c of this.caravans.slice()) {
       const p = c.r._p;
       if (!p) { this.caravans.splice(this.caravans.indexOf(c), 1); continue; }
-      c.d += dt * 1.6;
+      c.d += dt * 1.6 * (c.sp || 1);
       if (c.d < p.length - 1) continue;
       this.caravans.splice(this.caravans.indexOf(c), 1);
       const from = G.F(c.from), to = G.F(c.to);
       if (!from || !to || from.gone || to.gone) continue;
       c.r.n = (c.r.n || 0) + 1;
       // each delivery creates a little wealth at both ends: the goods the receiver is shortest of
-      for (const f of [to, from]) { const k = ['food', 'wood', 'stone'].sort((x, y) => f.res[x] - f.res[y])[0]; f.addRes(k, Math.round((8 + f.age * 2) * (f.hasWonder('colossus') ? 2 : 1) * (f.hasGreat('merchant') ? 1.5 : 1))); }
+      for (const f of [to, from]) { const k = ['food', 'wood', 'stone'].sort((x, y) => f.res[x] - f.res[y])[0]; f.addRes(k, Math.round((8 + f.age * 2) * (f.hasWonder('colossus') ? 2 : 1) * (f.hasGreat('merchant') ? 1.5 : 1) * (1 + f.fx('goods')))); }
       G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + 0.5, -100, 100);
       if (to.tc) View.float(to.tc.x, to.tc.y, '⚖', '#f0d9a0');
     }
@@ -1780,7 +1919,7 @@ const Plague = {
     for (const f of fs) {
       if (!f.plague || f.gone) continue;
       f.plague--;
-      f.plagueDead += f.killN(Math.round(f.pop * (0.008 + rnd() * 0.02) + rnd() * 0.8));
+      f.plagueDead += f.killN(Math.round((f.pop * (0.008 + rnd() * 0.02) + rnd() * 0.8) * (1 - f.fx('health'))));
       for (const o of fs) {
         if (o === f || o.gone || o.plague || o.immune > G.day) continue;
         const k = key(f.id, o.id), c = G.dip.contact[k] || 0, st = G.dip.stanceOf(f, o);
@@ -1863,7 +2002,7 @@ class Game {
     this.v = 4; this.day = 1; this.t = 0; this.speed = 3; this.world = null;
     this.buildings = []; this.cols = []; this.factions = []; this.camps_ = [];
     this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths(); this.trade = new Trade();
-    this.nid = 1; this.evCd = 4; this.records = {}; this.over = false; this.startN = 3;
+    this.nid = 1; this.evCd = 4; this.records = {}; this.eraFirst = {}; this.over = false; this.startN = 3;
     this._b = null; this._bid = null; this._c = null; this._f = null; this._own = null;
   }
   get year() { return Math.floor((this.day - 1) / YEAR) + 1; }
@@ -2099,7 +2238,7 @@ class Game {
   // ---------- saving and loading ----------
   toJSON() {
     return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, lastWonder: this.lastWonder, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, lastWonder: this.lastWonder, eraFirst: this.eraFirst, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; g.setup(n); g.history = new History(null, g.world.seed); g.history.capture(); return g; }
   static load(d) {
@@ -2107,7 +2246,7 @@ class Game {
     if (d.v === 3) return Game.migrate(d);
     if (d.v !== 4) return null;
     const g = new Game(); G = g;
-    for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN', 'lastWonder']) g[k] = d[k];
+    for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN', 'lastWonder', 'eraFirst']) if (d[k] !== undefined) g[k] = d[k];
     g.savedAt = d.at || 0;
     g.world = World.from(d.world);
     g.history = History.load(g.world.seed);
@@ -2217,11 +2356,12 @@ class Renderer {
     g.fillStyle = GRASS_DK[se];
     for (let k = 0; k < 4; k++) g.fillRect(x + hv(T.h, k) * 0.85, y + hv(T.h, k + 7) * 0.85, 0.08, 0.08);
     if (T.foot > 12) {
-      const of = T.own ? G.F(T.own) : null, paved = of && of.age >= 3 && T.foot > 160;
+      const of = T.own ? G.F(T.own) : null, era = of ? of.era : 0, paved = of && (of.age >= 3 || era >= 3) && T.foot > 160, tar = paved && era >= 5;
       const a = Math.min(0.6, (T.foot - 12) / 120);
-      g.fillStyle = paved ? `rgba(150,146,138,${Math.min(0.95, a + 0.2)})` : (se === 3 ? `rgba(170,160,150,${a})` : `rgba(140,108,70,${a})`);
+      g.fillStyle = tar ? `rgba(86,88,92,${Math.min(0.95, a + 0.3)})` : paved ? `rgba(150,146,138,${Math.min(0.95, a + 0.2)})` : (se === 3 ? `rgba(170,160,150,${a})` : `rgba(140,108,70,${a})`);
       g.fillRect(x + 0.04, y + 0.04, 0.92, 0.92);
-      if (paved) { g.strokeStyle = 'rgba(90,88,82,.35)'; g.lineWidth = 0.03; g.strokeRect(x + 0.1, y + 0.1, 0.38, 0.38); g.strokeRect(x + 0.52, y + 0.52, 0.38, 0.38); }
+      if (tar) { g.fillStyle = 'rgba(230,226,210,.5)'; g.fillRect(x + 0.46, y + 0.2, 0.08, 0.22); g.fillRect(x + 0.46, y + 0.58, 0.08, 0.22); }
+      else if (paved) { g.strokeStyle = 'rgba(90,88,82,.35)'; g.lineWidth = 0.03; g.strokeRect(x + 0.1, y + 0.1, 0.38, 0.38); g.strokeRect(x + 0.52, y + 0.52, 0.38, 0.38); }
     }
     if (T.t === 1) {
       const n = T.amt > 20 ? 3 : T.amt > 10 ? 2 : 1;
@@ -2284,7 +2424,7 @@ class Renderer {
     const out = new Map(), wint = G.season === 3 ? 1 : 0;
     const bs = G.buildings.filter(b => b.built).sort((p, q) => p.y - q.y);
     for (const b of bs) {
-      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (b.wk ? b.wk.length * 977 : 0) + (f && f.age >= 3 ? 1 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
+      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (b.wk ? b.wk.length * 977 : 0) + (f && f.age >= 3 ? 1 : 0) + (f ? f.era * 7919 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
       for (let cy = Math.floor((b.y - 0.6) / CS); cy <= Math.floor((b.y + 1.4) / CS); cy++) for (let cx = Math.floor((b.x - 0.2) / CS); cx <= Math.floor((b.x + 1.2) / CS); cx++) {
         const id = cx + ',' + cy;
         let e = out.get(id);
@@ -2328,7 +2468,7 @@ class Renderer {
   // each look of a building (type, stage, winter, owner colour) is painted once per zoom level and then stamped
   drawBuilding(g, b) {
     const f = G.F(b.f), type = !b.built && b.from ? b.from : b.type, res = this.sres;
-    const id = `${type}${b.wk || ''}|${b.built ? 1 : b.from ? 2 : 0}|${G.season === 3 ? 1 : 0}|${f ? f.color + (f.age >= 3 ? 1 : 0) : ''}|${res}`;
+    const id = `${type}${b.wk || ''}|${b.built ? 1 : b.from ? 2 : 0}|${G.season === 3 ? 1 : 0}|${f ? f.color + (f.age >= 3 ? 1 : 0) + 'e' + f.era : ''}|${res}`;
     let s = this.sprites.get(id);
     if (!s) {
       if (this.sprites.size > 600) this.sprites.clear();
@@ -2347,15 +2487,24 @@ class Renderer {
     }
   }
   paintBuilding(g, b, x, y) {
-    const se = G.season, w3 = se === 3, f = G.F(b.f);
+    const se = G.season, w3 = se === 3, f = G.F(b.f), era = f ? f.era : 0, L = ERA_LOOK[era];
     const type = !b.built && b.from ? b.from : b.type;
+    // industrial chimneys and smoke
+    const smoke = (sx, sy) => { g.fillStyle = '#5a4a40'; g.fillRect(sx, sy, 0.1, 0.22); g.fillStyle = 'rgba(200,200,205,.55)'; g.beginPath(); g.arc(sx + 0.08, sy - 0.08, 0.08, 0, 7); g.arc(sx + 0.18, sy - 0.2, 0.1, 0, 7); g.fill(); };
     g.save();
     if (!b.built && !b.from) g.globalAlpha = 0.45;
     g.fillStyle = 'rgba(0,0,0,.16)'; if (type !== 'farm' && type !== 'dock' && type !== 'market') g.fillRect(x + 0.1, y + 0.84, 0.84, 0.1);
     if (type === 'tc') {
-      g.fillStyle = f && f.age >= 3 ? '#a9a196' : '#7b5236'; g.fillRect(x + 0.1, y + 0.42, 0.8, 0.44);
-      g.fillStyle = '#a3402c'; tri(g, x + 0.02, y + 0.46, x + 0.5, y + 0.08, x + 0.98, y + 0.46);
+      if (era >= 6) {   // a city hall: a tall block with a clock
+        g.fillStyle = L.wall; g.fillRect(x + 0.1, y + 0.1, 0.8, 0.76);
+        g.fillStyle = L.win; for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) g.fillRect(x + 0.16 + k * 0.18, y + 0.18 + r * 0.14, 0.1, 0.08);
+        g.fillStyle = L.roof; g.fillRect(x + 0.06, y + 0.04, 0.88, 0.08);
+        g.fillStyle = '#f4f4f0'; g.beginPath(); g.arc(x + 0.5, y + 0.02, 0.1, 0, 7); g.fill();
+      } else {
+      g.fillStyle = era >= 5 ? L.wall : f && (f.age >= 3 || era >= 3) ? '#a9a196' : '#7b5236'; g.fillRect(x + 0.1, y + 0.42, 0.8, 0.44);
+      g.fillStyle = era >= 4 ? L.roof : '#a3402c'; tri(g, x + 0.02, y + 0.46, x + 0.5, y + 0.08, x + 0.98, y + 0.46);
       if (w3) { g.fillStyle = SNOW; tri(g, x + 0.2, y + 0.3, x + 0.5, y + 0.08, x + 0.8, y + 0.3); }
+      }
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.42, y + 0.6, 0.16, 0.26);
       g.fillStyle = '#f0c75a'; g.fillRect(x + 0.18, y + 0.54, 0.12, 0.1); g.fillRect(x + 0.7, y + 0.54, 0.12, 0.1);
       if (f) {
@@ -2396,40 +2545,65 @@ class Renderer {
       }
       if (f) { g.fillStyle = f.color; tri(g, x + 1.02, y - 0.3, x + 1.18, y - 0.24, x + 1.02, y - 0.18); g.fillStyle = '#3a2618'; g.fillRect(x + 1.0, y - 0.3, 0.025, 0.4); }
     } else if (type === 'hut') {
-      g.fillStyle = '#9a6b44'; g.fillRect(x + 0.22, y + 0.48, 0.56, 0.38);
-      g.fillStyle = '#5f4128'; tri(g, x + 0.14, y + 0.5, x + 0.5, y + 0.18, x + 0.86, y + 0.5);
+      g.fillStyle = L.wall; g.fillRect(x + 0.22, y + 0.48, 0.56, 0.38);
+      g.fillStyle = L.roof; tri(g, x + 0.14, y + 0.5, x + 0.5, y + 0.18, x + 0.86, y + 0.5);
       if (w3) { g.fillStyle = SNOW; tri(g, x + 0.28, y + 0.38, x + 0.5, y + 0.18, x + 0.72, y + 0.38); }
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.44, y + 0.64, 0.12, 0.22);
     } else if (type === 'house') {
-      g.fillStyle = '#c9a57a'; g.fillRect(x + 0.14, y + 0.36, 0.72, 0.5);
-      g.strokeStyle = '#5c3d26'; g.lineWidth = 0.05; g.strokeRect(x + 0.14, y + 0.36, 0.72, 0.5);
-      g.beginPath(); g.moveTo(x + 0.14, y + 0.6); g.lineTo(x + 0.86, y + 0.6); g.stroke();
-      g.fillStyle = '#8a3a28'; tri(g, x + 0.06, y + 0.4, x + 0.5, y + 0.06, x + 0.94, y + 0.4);
+      if (era >= 5) smoke(x + 0.66, y + 0.08);
+      g.fillStyle = L.wall; g.fillRect(x + 0.14, y + 0.36, 0.72, 0.5);
+      if (era <= 3) { g.strokeStyle = '#5c3d26'; g.lineWidth = 0.05; g.strokeRect(x + 0.14, y + 0.36, 0.72, 0.5);
+      g.beginPath(); g.moveTo(x + 0.14, y + 0.6); g.lineTo(x + 0.86, y + 0.6); g.stroke(); }
+      g.fillStyle = L.roof; tri(g, x + 0.06, y + 0.4, x + 0.5, y + 0.06, x + 0.94, y + 0.4);
       if (w3) { g.fillStyle = SNOW; tri(g, x + 0.24, y + 0.26, x + 0.5, y + 0.06, x + 0.76, y + 0.26); }
-      g.fillStyle = '#f0c75a'; g.fillRect(x + 0.24, y + 0.44, 0.12, 0.1); g.fillRect(x + 0.64, y + 0.44, 0.12, 0.1);
+      g.fillStyle = L.win; g.fillRect(x + 0.24, y + 0.44, 0.12, 0.1); g.fillRect(x + 0.64, y + 0.44, 0.12, 0.1);
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.44, y + 0.66, 0.12, 0.2);
+    } else if (type === 'manor' && era >= 6) {   // an apartment tower
+      g.fillStyle = L.wall; g.fillRect(x + 0.14, y - 0.4, 0.72, 1.28);
+      g.fillStyle = '#9aa4ad'; g.fillRect(x + 0.7, y - 0.4, 0.16, 1.28);
+      g.fillStyle = L.roof; g.fillRect(x + 0.1, y - 0.48, 0.8, 0.1);
+      g.fillStyle = L.win; for (let r = 0; r < 6; r++) for (let k = 0; k < 3; k++) g.fillRect(x + 0.2 + k * 0.17, y - 0.3 + r * 0.17, 0.1, 0.1);
+      g.fillStyle = '#3a3f45'; g.fillRect(x + 0.42, y + 0.72, 0.16, 0.16);
     } else if (type === 'manor') {
-      g.fillStyle = '#b3aa9c'; g.fillRect(x + 0.1, y + 0.24, 0.8, 0.64);
-      g.fillStyle = '#4b5561'; g.fillRect(x + 0.06, y + 0.14, 0.88, 0.14);
+      if (era >= 5) smoke(x + 0.2, y - 0.02);
+      g.fillStyle = era >= 4 ? L.wall : '#b3aa9c'; g.fillRect(x + 0.1, y + 0.24, 0.8, 0.64);
+      g.fillStyle = era >= 4 ? L.roof : '#4b5561'; g.fillRect(x + 0.06, y + 0.14, 0.88, 0.14);
       if (w3) { g.fillStyle = SNOW; g.fillRect(x + 0.06, y + 0.12, 0.88, 0.06); }
-      g.fillStyle = '#f0c75a';
+      g.fillStyle = L.win;
       for (let r = 0; r < 2; r++) for (let k = 0; k < 3; k++) g.fillRect(x + 0.18 + k * 0.24, y + 0.34 + r * 0.22, 0.12, 0.12);
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.44, y + 0.72, 0.12, 0.16);
     } else if (type === 'farm') {
       g.fillStyle = w3 ? '#d9e0e3' : '#7a5a3a'; g.fillRect(x + 0.04, y + 0.04, 0.92, 0.92);
       g.strokeStyle = ['#9bd06a', '#d8c046', '#e6a43a', '#b9c3c8'][se]; g.lineWidth = 0.09;
-      for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(x + 0.12, y + 0.2 + k * 0.2); g.lineTo(x + 0.88, y + 0.2 + k * 0.2); g.stroke(); }
+      for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(x + 0.12, y + 0.2 + k * 0.2); g.lineTo(x + (era >= 5 ? 0.68 : 0.88), y + 0.2 + k * 0.2); g.stroke(); }
+      if (era >= 5) { g.fillStyle = era >= 6 ? '#d7dde2' : '#9c4a36'; g.fillRect(x + 0.72, y + 0.1, 0.2, 0.7); g.fillStyle = era >= 6 ? '#9aa6b0' : '#5a5f66'; g.beginPath(); g.arc(x + 0.82, y + 0.1, 0.1, Math.PI, 0); g.fill(); }
     } else if (type === 'dock') {
       g.fillStyle = '#a07a4f'; g.fillRect(x + 0.12, y + 0.3, 0.76, 0.4);
       g.strokeStyle = '#6e5234'; g.lineWidth = 0.04;
       for (let k = 1; k < 5; k++) { g.beginPath(); g.moveTo(x + 0.12 + k * 0.15, y + 0.3); g.lineTo(x + 0.12 + k * 0.15, y + 0.7); g.stroke(); }
       g.fillStyle = '#4a3420'; g.fillRect(x + 0.14, y + 0.66, 0.08, 0.14); g.fillRect(x + 0.78, y + 0.66, 0.08, 0.14);
+    } else if (type === 'store' && era >= 5) {   // a factory with a sawtooth roof
+      smoke(x + 0.74, y - 0.12);
+      g.fillStyle = L.wall; g.fillRect(x + 0.06, y + 0.4, 0.88, 0.48);
+      g.fillStyle = L.roof; for (let k = 0; k < 3; k++) tri(g, x + 0.06 + k * 0.29, y + 0.42, x + 0.06 + k * 0.29, y + 0.22, x + 0.35 + k * 0.29, y + 0.42);
+      g.fillStyle = L.win; for (let k = 0; k < 4; k++) g.fillRect(x + 0.12 + k * 0.2, y + 0.54, 0.12, 0.12);
+      g.fillStyle = '#2f3438'; g.fillRect(x + 0.42, y + 0.7, 0.16, 0.18);
     } else if (type === 'store') {
-      g.fillStyle = '#8d7b58'; g.fillRect(x + 0.1, y + 0.36, 0.8, 0.5);
+      g.fillStyle = era >= 4 ? L.wall : '#8d7b58'; g.fillRect(x + 0.1, y + 0.36, 0.8, 0.5);
       g.fillStyle = '#54452f'; g.fillRect(x + 0.04, y + 0.26, 0.92, 0.14);
       if (w3) { g.fillStyle = SNOW; g.fillRect(x + 0.04, y + 0.24, 0.92, 0.06); }
       g.fillStyle = '#c0954f'; g.fillRect(x + 0.18, y + 0.62, 0.2, 0.2); g.fillRect(x + 0.42, y + 0.66, 0.16, 0.16);
       g.fillStyle = '#3a2f20'; g.fillRect(x + 0.64, y + 0.52, 0.18, 0.34);
+    } else if (type === 'tower' && era >= 6) {   // a radar post
+      g.fillStyle = '#7d8a74'; g.fillRect(x + 0.2, y + 0.56, 0.6, 0.32);
+      g.strokeStyle = '#c8ced3'; g.lineWidth = 0.05; g.beginPath(); g.moveTo(x + 0.5, y + 0.56); g.lineTo(x + 0.5, y - 0.1); g.stroke();
+      g.fillStyle = '#e6eaee'; g.beginPath(); g.ellipse(x + 0.5, y - 0.12, 0.24, 0.09, -0.3, 0, 7); g.fill();
+      g.fillStyle = f ? f.color : '#c0392b'; g.fillRect(x + 0.26, y + 0.64, 0.14, 0.1);
+    } else if (type === 'tower' && era >= 4) {   // a low bastion with a cannon
+      g.fillStyle = '#8a929a'; g.beginPath(); g.moveTo(x + 0.06, y + 0.9); g.lineTo(x + 0.16, y + 0.4); g.lineTo(x + 0.84, y + 0.4); g.lineTo(x + 0.94, y + 0.9); g.closePath(); g.fill();
+      g.fillStyle = '#a7aeb5'; g.fillRect(x + 0.14, y + 0.36, 0.72, 0.08);
+      g.fillStyle = '#2b2b2b'; g.save(); g.translate(x + 0.5, y + 0.36); g.rotate(-0.35); g.fillRect(0, -0.05, 0.4, 0.1); g.restore();
+      g.fillStyle = f ? f.color : '#c0392b'; tri(g, x + 0.2, y + 0.06, x + 0.4, y + 0.12, x + 0.2, y + 0.18); g.fillStyle = '#4a3420'; g.fillRect(x + 0.18, y + 0.06, 0.03, 0.32);
     } else if (type === 'tower') {
       g.fillStyle = '#8a929a'; g.fillRect(x + 0.3, y + 0.24, 0.4, 0.66);
       g.fillStyle = '#a7aeb5';
@@ -2439,8 +2613,8 @@ class Renderer {
       g.strokeStyle = '#4a3420'; g.lineWidth = 0.04; g.beginPath(); g.moveTo(x + 0.5, y + 0.14); g.lineTo(x + 0.5, y - 0.12); g.stroke();
       g.fillStyle = f ? f.color : '#c0392b'; tri(g, x + 0.52, y - 0.12, x + 0.76, y - 0.05, x + 0.52, y + 0.02);
     } else if (type === 'barracks') {
-      g.fillStyle = '#7d6b55'; g.fillRect(x + 0.04, y + 0.4, 0.92, 0.48);
-      g.fillStyle = '#4a3a2c'; g.fillRect(x + 0.02, y + 0.3, 0.96, 0.14);
+      g.fillStyle = era >= 5 ? '#6f7a5c' : '#7d6b55'; g.fillRect(x + 0.04, y + 0.4, 0.92, 0.48);
+      g.fillStyle = era >= 5 ? '#454d3a' : '#4a3a2c'; g.fillRect(x + 0.02, y + 0.3, 0.96, 0.14);
       g.fillStyle = f ? f.color : '#b5312a'; g.beginPath(); g.arc(x + 0.5, y + 0.62, 0.13, 0, 7); g.fill();
       g.fillStyle = '#e8c45a'; g.fillRect(x + 0.47, y + 0.52, 0.06, 0.2);
     } else if (type === 'chapel') {
@@ -2553,24 +2727,43 @@ class Renderer {
   drawRoads(ctx, k, dpr, inView) {
     const T = G.trade;
     if (!T.routes.length) return;
-    ctx.beginPath();
-    for (const r of T.routes) {
-      const p = r._p; if (!p || !p.length) continue;
-      ctx.moveTo(p[0].x + 0.5, p[0].y + 0.5);
-      for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x + 0.5, p[i].y + 0.5);
-    }
+    // a road is only as good as the less advanced realm at either end: dirt, then cobbles, railways and highways
     const lw = Math.max(0.1, 1.6 * dpr / k);
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(70,46,22,.6)'; ctx.lineWidth = lw * 2.4; ctx.stroke();
-    ctx.strokeStyle = '#f3dc9c'; ctx.lineWidth = lw; ctx.setLineDash([lw * 2.5, lw * 2]); ctx.stroke(); ctx.setLineDash([]);
+    const STY = [['rgba(70,46,22,.6)', '#f3dc9c', [2.5, 2]], ['rgba(80,78,74,.75)', '#d8d4ca', [1.2, 0.8]], ['#26221f', '#b89a70', [0.5, 1.1]], ['#45484c', '#f2e7a8', [3, 2.5]]];
+    for (let st = 0; st < 4; st++) {
+      let any = false;
+      ctx.beginPath();
+      for (const r of T.routes) {
+        const p = r._p; if (!p || !p.length) continue;
+        const a = G.F(r.a), b = G.F(r.b), e = Math.min(a ? a.era : 0, b ? b.era : 0);
+        if ((e >= 6 ? 3 : e >= 5 ? 2 : e >= 3 ? 1 : 0) !== st) continue;
+        any = true;
+        ctx.moveTo(p[0].x + 0.5, p[0].y + 0.5);
+        for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x + 0.5, p[i].y + 0.5);
+      }
+      if (!any) continue;
+      const [edge, mid, dash] = STY[st];
+      ctx.strokeStyle = edge; ctx.lineWidth = lw * (st === 3 ? 3.2 : 2.4); ctx.stroke();
+      ctx.strokeStyle = mid; ctx.lineWidth = st === 2 ? lw * 2 : lw; ctx.setLineDash([lw * dash[0], lw * dash[1]]); ctx.stroke(); ctx.setLineDash([]);
+    }
     const s = Math.max(0.32, 4 * dpr / k);
     for (const c of T.caravans) {
       if (!c.r._p) continue;
       const q = T.at(c);
       if (!inView(q)) continue;
-      const f = G.F(c.from);
-      ctx.fillStyle = '#2a1d12'; ctx.fillRect(q.x + 0.5 - s * 0.6, q.y + 0.5 - s * 0.45, s * 1.2, s * 0.9);
-      ctx.fillStyle = f ? f.color : '#e8d9b0'; ctx.fillRect(q.x + 0.5 - s * 0.45, q.y + 0.5 - s * 0.32, s * 0.9, s * 0.64);
+      const f = G.F(c.from), col = f ? f.color : '#e8d9b0', x = q.x + 0.5, y = q.y + 0.5;
+      if (c.era >= 6) {   // a truck
+        ctx.fillStyle = '#eef0f2'; ctx.fillRect(x - s * 0.7, y - s * 0.38, s * 1.0, s * 0.76);
+        ctx.fillStyle = col; ctx.fillRect(x + s * 0.32, y - s * 0.32, s * 0.4, s * 0.64);
+      } else if (c.era >= 5) {   // a little train: engine and two cars
+        ctx.fillStyle = '#1e1e22'; ctx.fillRect(x - s * 1.3, y - s * 0.4, s * 2.6, s * 0.8);
+        ctx.fillStyle = col; ctx.fillRect(x - s * 1.2, y - s * 0.28, s * 0.7, s * 0.56); ctx.fillRect(x - s * 0.4, y - s * 0.28, s * 0.7, s * 0.56);
+        ctx.fillStyle = '#c94b3a'; ctx.fillRect(x + s * 0.45, y - s * 0.3, s * 0.75, s * 0.6);
+      } else {
+        ctx.fillStyle = '#2a1d12'; ctx.fillRect(x - s * 0.6, y - s * 0.45, s * 1.2, s * 0.9);
+        ctx.fillStyle = col; ctx.fillRect(x - s * 0.45, y - s * 0.32, s * 0.9, s * 0.64);
+      }
     }
   }
   drawLabels() {
@@ -2697,7 +2890,7 @@ class Interface {
   }
   setTab(t) {
     this.tab = t;
-    ['realm', 'pol', 'log'].forEach(n => { $('tab-' + n).setAttribute('aria-selected', String(n === t)); $('pane-' + n).hidden = n !== t; });
+    ['realm', 'pol', 'tech', 'log'].forEach(n => { $('tab-' + n).setAttribute('aria-selected', String(n === t)); $('pane-' + n).hidden = n !== t; });
     G.chron.dirty = true; this.html = {}; this.refresh();
   }
   setHtml(id, html) { if (this.html[id] !== html) { $(id).innerHTML = html; this.html[id] = html; } }
@@ -2746,7 +2939,7 @@ class Interface {
       const B = b.wk ? { ...BUILD.wonder, name: upper(WONDERS[b.wk].name) } : BUILD[b.type], f = b.owner;
       if (b.wk && b.built) return `<b>${B.name}</b> of ${f.name} · a wonder of the world that brings ${WONDERS[b.wk].does}`;
       if (!b.built) return `<b>${B.name}</b> of ${f.name} · ${b.from ? 'being rebuilt' : 'under construction'}, ${Math.floor(Math.min(1, b.prog / B.time) * 100)}%`;
-      if (b.type === 'tc') return `<b>${f.name}</b> · ${AGES[f.age].name.toLowerCase()} of ${f.pop} · defense ${f.defense}`;
+      if (b.type === 'tc') return `<b>${f.name}</b> · ${AGES[f.age].name.toLowerCase()} of ${f.pop} · ${ERAS[f.era]} · defense ${f.defense}`;
       if (B.slots) return `<b>${B.name}</b> of ${f.name} · yields ${f.farmYield(b)} a trip`;
       if (B.house) return `<b>${B.name}</b> of ${f.name} · home for ${B.house}`;
       if (B.def) return `<b>${B.name}</b> of ${f.name} · adds ${B.def} defense`;
@@ -2786,7 +2979,8 @@ class Interface {
   wire() {
     R.cv.addEventListener('click', e => this.tap(e));
     [0, 1, 3, 10].forEach(n => $('sp' + n).addEventListener('click', () => this.setSpeed(n)));
-    ['realm', 'pol', 'log'].forEach(n => $('tab-' + n).addEventListener('click', () => this.setTab(n)));
+    ['realm', 'pol', 'tech', 'log'].forEach(n => $('tab-' + n).addEventListener('click', () => this.setTab(n)));
+    $('techrealms').addEventListener('click', e => { const b = e.target.closest('button.town'); if (b) { this.sel = +b.dataset.id; this.refresh(); } });
     $('realm').addEventListener('click', e => {
       const b = e.target.closest('button.town');
       if (!b) return;
@@ -2847,7 +3041,7 @@ class Interface {
       const why = (f.moodWhy || []).join(', ');
       const rels = G.alive().filter(o => o !== f).map(o => `${STANCE[G.dip.stanceOf(f, o)].toLowerCase()} with ${o.name}`).join('; ');
       const reign = Math.floor(f.ruler.years);
-      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}${f.great ? `<br><b>Great ${GREATS[f.great.kind].what}:</b> ${f.great.name} ${f.great.ep}, bringing ${GREATS[f.great.kind].does}.` : ''}${f.buildings.some(b => b.type === 'wonder' && b.built) ? `<br><b>Wonders:</b> ${f.buildings.filter(b => b.type === 'wonder' && b.built).map(b => upper(WONDERS[b.wk].name)).join(', ')}.` : ''}<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
+      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}${f.great ? `<br><b>Great ${GREATS[f.great.kind].what}:</b> ${f.great.name} ${f.great.ep}, bringing ${GREATS[f.great.kind].does}.` : ''}${f.buildings.some(b => b.type === 'wonder' && b.built) ? `<br><b>Wonders:</b> ${f.buildings.filter(b => b.type === 'wonder' && b.built).map(b => upper(WONDERS[b.wk].name)).join(', ')}.` : ''}<br><b>Era:</b> ${ERAS[f.era]}${f.study ? `, studying ${TECHS[f.study].name}` : ''}.<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
       for (const k of Object.keys(JOBS)) {
         const n = f.people.filter(o => o.job === k).length;
         $('n-' + k).textContent = n;
@@ -2861,6 +3055,21 @@ class Interface {
       const counts = {};
       for (const b of f.buildings) if (b.built) counts[b.type] = (counts[b.type] || 0) + 1;
       this.setHtml('counts', Object.keys(BUILD).filter(k => counts[k]).map(k => `<div class="count"><span>${BUILD[k].name}</span><b>${counts[k]}</b></div>`).join(''));
+    } else if (this.tab === 'tech') {
+      const fs = G.alive().sort((a, b) => b.techs.length - a.techs.length || b.pop - a.pop);
+      this.setHtml('techrealms', fs.map(o => {
+        const st = o.study ? TECHS[o.study] : null, p = st ? Math.min(1, (o.sci || 0) / o.techCost(o.study)) : 1;
+        return `<button class="town" data-id="${o.id}" aria-pressed="${o === f}"><span class="flag" style="background:${o.color}"></span><span>${o.name}<div class="tbar"><i style="width:${Math.round(p * 100)}%"></i></div></span><span class="tp">${st ? `${st.name} ${Math.floor(p * 100)}%` : 'knows it all'}</span><span class="chip home">${ERAS[o.era]}</span></button>`;
+      }).join(''));
+      this.setHtml('tree', ERAS.map((nm, e) => {
+        const r = G.eraFirst && G.eraFirst[e], here = f.era === e;
+        const note = here ? `<small class="here">${f.name} is here</small>` : r ? `<small>first: ${r.n}, year ${Math.floor((r.d - 1) / YEAR) + 1}</small>` : e ? '<small>no realm yet</small>' : '';
+        const cells = Object.keys(TECHS).filter(t => TECHS[t].era === e).map(t => {
+          const T = TECHS[t], who = fs.filter(o => o.knows(t)), cls = f.knows(t) ? 'known' : f.study === t ? 'now' : '';
+          return `<div class="tech ${cls}"><b>${f.knows(t) ? '✓ ' : ''}${T.name}</b><span>${upper(T.does)}</span><span class="dots">${who.slice(0, 12).map(o => `<i style="background:${o.color}" title="${o.name}"></i>`).join('')}</span></div>`;
+        }).join('');
+        return `<section class="era"><h3>${nm}${note}</h3><div class="ts">${cells}</div></section>`;
+      }).join(''));
     } else if (this.tab === 'pol') {
       const fs = G.alive(), rows = [];
       for (let i = 0; i < fs.length; i++) for (let j = i + 1; j < fs.length; j++) {
@@ -2887,6 +3096,7 @@ class Interface {
       }
     } else if (G.chron.dirty) {
       $('miles').innerHTML = AGES.slice(1).map((a, i) => { const r = G.records[i + 1]; return `<span class="mile${r ? ' done' : ''}">First ${a.name.toLowerCase()}${r ? `: ${r.n}` : ''}</span>`; }).join('')
+        + ERAS.slice(1).map((nm, i) => { const r = G.eraFirst && G.eraFirst[i + 1]; return `<span class="mile${r ? ' done' : ''}">First to the ${nm}${r ? `: ${r.n}` : ''}</span>`; }).join('')
         + `<span class="mile done">Known world: ${W.w} × ${W.h}</span>`;
       const hist = $('hist'); hist.textContent = '';
       let ys = null, ul2 = null;
@@ -3127,7 +3337,7 @@ document.addEventListener('visibilitychange', () => {
   else if (hiddenAt) { const s = (Date.now() - hiddenAt) / 1000; hiddenAt = 0; if (s > 20) Away.start(s); }
 });
 window.claude?.hot?.snapshot?.(() => ({ save: JSON.stringify(G) }));
-window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter, Away, Replay };
+window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter, Away, Replay, TECHS };
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
 </script>
