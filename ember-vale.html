@@ -89,6 +89,23 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
   background: linear-gradient(90deg, transparent, rgba(20,16,8,.72) 18%, rgba(20,16,8,.72) 82%, transparent); color: #f6e7c4; }
 .banner small { display: block; font: 600 0.72rem var(--f-body); letter-spacing: 0.16em; text-transform: uppercase; color: #e3b25a; }
 .banner strong { display: block; font: 400 2rem var(--f-display); margin-top: 2px; }
+.card { position: absolute; left: 10px; right: 10px; top: 10px; background: rgba(20,16,8,.86); color: #f6e7c4; border-radius: 12px; padding: 10px 14px 11px 18px;
+  box-shadow: 0 6px 22px rgba(0,0,0,.35); cursor: pointer; overflow: hidden; animation: cardin .35s ease-out; }
+.card > i { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; }
+.card small { display: block; font: 600 0.68rem var(--f-body); letter-spacing: 0.14em; text-transform: uppercase; color: #e3b25a; }
+.card strong { display: block; font: 400 1.3rem/1.15 var(--f-display); margin-top: 3px; text-wrap: balance; }
+.card p { margin: 4px 0 0; font-size: 0.82rem; line-height: 1.35; color: #e6d8b8; }
+@keyframes cardin { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .card { animation: none; } }
+.hist { display: flex; flex-direction: column; gap: 10px; max-height: 380px; overflow-y: auto; }
+.hist h3 { font: 400 1rem var(--f-display); margin: 0 0 4px; }
+.hist ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.hist li { font-size: 0.86rem; line-height: 1.35; display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 8px; }
+.hist li i { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: var(--muted); }
+.hist li.bad { color: var(--bad); } .hist li.good { color: var(--good); } .hist li.age { color: var(--accent); font-weight: 700; }
+.hist li small { color: var(--muted); font-family: var(--f-mono); font-size: 0.7rem; margin-right: 4px; }
+.daily summary { cursor: pointer; color: var(--muted); font: 600 0.8rem var(--f-body); padding: 4px 0; }
+.daily[open] summary { margin-bottom: 6px; }
 
 .drawer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
@@ -192,6 +209,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <canvas id="map" aria-label="The map of the vale. Tap anywhere to inspect a person, building or tile."></canvas>
     <div class="toast" id="toast" hidden></div>
     <div class="banner" id="banner" hidden><small id="bansmall">A new age</small><strong id="banbig"></strong></div>
+    <div class="card" id="card" role="status" hidden><i id="cardbar"></i><small id="cardk"></small><strong id="cardt"></strong><p id="cardx"></p></div>
   </div>
   <div class="info" id="info">Every settlement runs itself. Tap the map to inspect a person, building or tile.</div>
 
@@ -219,7 +237,9 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     </div>
     <div class="pane" id="pane-log" hidden>
       <div class="miles" id="miles"></div>
-      <ul class="log" id="log"></ul>
+      <div class="sub">History of the vale</div>
+      <div class="hist" id="hist"></div>
+      <details class="daily"><summary>Daily record</summary><ul class="log" id="log"></ul></details>
       <button class="reset" id="reset">Found a new world</button>
     </div>
   </div>
@@ -289,7 +309,15 @@ const BUILD = {
 };
 const HOUSING = ['tc', 'hut', 'house', 'manor'];
 const LANDMARKS = ['chapel', 'market', 'cathedral', 'castle', 'palace'];
-const FACTION_NAMES = ['Thornbury', 'Greywater', 'Oakhurst', 'Larkspur', 'Ravensby', 'Millhaven', 'Stonebridge', 'Kestrel Hill', 'Ashford', 'Hollowell', 'Wyndham', 'Fallowmere', 'Corrowmere', 'Brackenhold', 'Northcombe', 'Eastwick', 'Dunhallow', 'Ironbrook'];
+const FACTION_NAMES = ['Thornbury', 'Greywater', 'Oakhurst', 'Larkspur', 'Ravensby', 'Millhaven', 'Stonebridge', 'Kestrel Hill', 'Ashford', 'Hollowell', 'Wyndham', 'Fallowmere', 'Corrowmere', 'Brackenhold', 'Northcombe', 'Eastwick', 'Dunhallow', 'Ironbrook',
+  'Westmarch', 'Highgate', 'Saltmere', 'Redcliff', 'Elmstead', 'Brightwater', 'Coldharbour', 'Ambervale', 'Sunmere', 'Blackmoor', 'Windrush', 'Copperhill', 'Pinecrest', 'Harrowgate'];
+const TITLES = ['Chief', 'Elder', 'Lord', 'Grand Duke', 'Monarch', 'Emperor'];
+const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+const TRAITS = { wise: { m: 4, why: 'a wise ruler', ep: 'the Wise' }, just: { m: 3, why: 'a just ruler', ep: 'the Just' }, pious: { m: 2, why: 'a pious ruler', ep: 'the Pious' },
+  proud: { m: 0, why: '', ep: 'the Proud' }, weak: { m: -4, why: 'a weak ruler', ep: 'the Weak' }, cruel: { m: -6, why: 'a cruel ruler', ep: 'the Cruel' } };
+const EPITHETS = { conquer: 'the Conqueror', build: 'the Builder', peace: 'the Peacemaker', plague: 'the Unlucky', split: 'the Divided', rebel: 'the Usurper' };
+const PLAGUES = ['the Grey Death', 'the Sweating Sickness', 'the Red Cough', 'the Blight Fever', 'the Black Flux'];
+const SEC_MAX = 9;
 const COLORS = ['#e3a246', '#3d7fd1', '#a24bc0', '#2f9a63', '#d0453a', '#3fa3a3', '#6a5acd', '#c9b03a', '#d4608f', '#8a5a2b'];
 const CAMP_NAMES = ['Red Hand', 'Wolf Clan', 'Ash Riders', 'Black Fang', 'Bone Hill', 'Iron Crows', 'Grey Marauders', 'Night Howlers', 'Skull Ford'];
 const STANCE = { ally: 'Allied', neutral: 'At peace', war: 'At war' };
@@ -302,7 +330,7 @@ const pick = a => a[Math.floor(rnd() * a.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const N4 = [[1,0],[-1,0],[0,1],[0,-1]];
 let s = null;
-const ui = { tab: 'realm', sel: null, inspect: null, zoom: null, toastT: 0, bannerT: 0, html: {}, pickN: 3 };
+const ui = { tab: 'realm', sel: null, inspect: null, zoom: null, toastT: 0, bannerT: 0, html: {}, pickN: 3, cards: [], cardT: 0 };
 let floaters = [];
 let terrDirty = true, logDirty = true;
 
@@ -407,25 +435,47 @@ function spawnCol(f, job) {
   f.stats.peak = Math.max(f.stats.peak, popOf(f));
   return c;
 }
-function foundFaction(name, x, y, parent) {
+function crown(f) {
+  f.names = f.names || {};
+  const nm = f.ruler && rnd() < 0.35 ? f.ruler.name : pick(NAMES);
+  const n = (f.names[nm] || 0) + 1; f.names[nm] = n;
+  f.ruler = { name: nm, n, trait: pick(Object.keys(TRAITS)), since: s.day, ep: '' };
+}
+const rulerName = f => !f.ruler ? f.name : `${f.ruler.name}${f.ruler.n > 1 ? ' ' + ROMAN[Math.min(10, f.ruler.n)] : ''}${f.ruler.ep ? ' ' + f.ruler.ep : ''}`;
+const an = w => (/^[aeiou]/i.test(w) ? 'an ' : 'a ') + w;
+const rulerTitle = f => `${TITLES[f.age]} ${rulerName(f)}`;
+function earn(f, k) { if (f && f.ruler && !f.ruler.ep) f.ruler.ep = EPITHETS[k]; }
+function chron(text, k, f) {
+  s.chron.unshift({ y: year(), se: season(), d: s.day, text, k: k || '', c: f ? f.color : '' });
+  if (s.chron.length > 220) s.chron.length = 220;
+  logDirty = true;
+}
+function card(kicker, title, body, color) {
+  ui.cards.push({ d: s.day, k: `Year ${year()} · ${kicker}`, t: title, x: body || '', c: color || '#e3b25a' });
+  if (ui.cards.length > 3) ui.cards.splice(0, ui.cards.length - 3);
+}
+function foundFaction(name, x, y, parent, noTc) {
   const used = new Set(s.factions.map(f => f.name));
-  const nm = name || pick(FACTION_NAMES.filter(n => !used.has(n))) || 'New Hope';
+  const nm = name || pick(FACTION_NAMES.filter(n => !used.has(n))) || (parent ? pick(['New', 'Free', 'North', 'South', 'Little']) + ' ' + parent.name.split(' ').pop() : 'New Hope');
   const usedC = new Set(alive().map(f => f.color));
   const color = COLORS.find(c => !usedC.has(c)) || pick(COLORS);
   const f = { id: s.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10 }, mood: 62, grief: 0, moodWhy: [],
               steward: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: s.day, parent: parent ? parent.id : 0,
-              stats: { born: 0, died: 0, peak: 0 } };
+              stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0 };
+  crown(f);
   s.factions.push(f);
-  const T = tile(x, y);
-  if (T.t !== 0) { T.t = 0; T.amt = 0; }
-  T.sap = 0;
-  addB(f, 'tc', x, y, true);
+  if (!noTc) {
+    const T = tile(x, y);
+    if (T.t !== 0) { T.t = 0; T.amt = 0; }
+    T.sap = 0;
+    addB(f, 'tc', x, y, true);
+  }
   for (const o of alive()) if (o !== f) { s.rel[key(f.id, o.id)] = 0; s.stance[key(f.id, o.id)] = 'neutral'; }
   return f;
 }
 function newWorld(n) {
   s = { v: 3, day: 1, t: 0, speed: 3, tiles: [], buildings: [], cols: [], factions: [], rel: {}, stance: {}, war: {}, contact: {}, camps: [],
-        log: [], nid: 1, evCd: 4, records: {}, over: false, startN: n };
+        log: [], chron: [], broke: {}, nid: 1, evCd: 4, records: {}, over: false, startN: n };
   dirtyB(); dirtyC();
   const sites = pickStarts(n);
   s.tiles = genMap(sites);
@@ -437,7 +487,8 @@ function newWorld(n) {
   });
   recomputeTerritory();
   log(n === 1 ? 'Five settlers make camp in the vale.' : `${n} bands of settlers make camp in the vale, each unaware of what the others intend.`);
-  ui.sel = s.factions[0].id; ui.zoom = null; ui.inspect = null; ui.html = {};
+  for (const f of s.factions) chron(`${rulerTitle(f)} led the first settlers of ${f.name} into the vale.`, '', f);
+  ui.sel = s.factions[0].id; ui.zoom = null; ui.inspect = null; ui.html = {}; ui.cards = []; ui.cardT = 0; $('card').hidden = true;
   floaters = []; terrDirty = true; logDirty = true; cam = null;
 }
 
@@ -765,8 +816,9 @@ function stewardBuild(f) {
   if (sites.length >= 1 + Math.floor(pop / 10)) return;
   const slots = fBuild(f).filter(b => b.type === 'farm' || b.type === 'dock').reduce((n, b) => n + BUILD[b.type].slots, 0);
   const next = AGES[f.age + 1];
-  const markType = next ? next.mark : null;
-  const markNeeded = markType && pop >= next.pop * 0.7 && !anyCount(f, markType);
+  const lost = f.age > 0 && !anyCount(f, AGES[f.age].mark) ? AGES[f.age] : null;
+  const markType = lost ? lost.mark : next ? next.mark : null;
+  const markNeeded = markType && (lost || pop >= next.pop * 0.7) && !anyCount(f, markType);
   const reserve = markNeeded ? BUILD[markType].cost : null;
   const canSpend = (cost, urgent) => afford(f, cost) && (urgent || !reserve || Object.entries(cost).every(([k, v]) => f.res[k] - v >= (reserve[k] || 0) * 0.6));
   const tryBuild = (type, why, urgent) => {
@@ -783,7 +835,7 @@ function stewardBuild(f) {
     if (tryBuild('hut', 'Building homes so the settlement can grow.', f.age < 2)) return;
     if (!placeSpot(f, 'hut')) f.steward = 'Out of land inside our borders. Growth now comes from rebuilding upward.';
   }
-  if (markNeeded && tryBuild(markType, `Raising a ${BUILD[markType].name.toLowerCase()}. Becoming a ${next.name.toLowerCase()} needs it.`, true)) return;
+  if (markNeeded && tryBuild(markType, `Raising a ${BUILD[markType].name.toLowerCase()}. ${lost ? `Staying a ${lost.name.toLowerCase()}` : `Becoming a ${next.name.toLowerCase()}`} needs it.`, true)) return;
   if (markNeeded) f.steward = `Saving ${BUILD[markType].cost.wood} wood and ${BUILD[markType].cost.stone} stone for a ${BUILD[markType].name.toLowerCase()}.`;
   const full = ['food', 'wood', 'stone'].some(k => f.res[k] >= c * 0.85);
   const winterStock = (se === 2 || se === 1) && c < pop * 6;
@@ -830,16 +882,20 @@ function moodTarget(f) {
   if (lm) { m += lm * 4; why.push('proud landmarks'); }
   const size = Math.min(15, Math.floor(pop / 25) * 3);
   if (size) { m -= size; if (pop >= 50) why.push('a sprawling realm'); }
-  if (f.grief > 5) { m -= f.grief; why.push('recent losses'); }
+  if (f.grief > 5) { m -= Math.min(20, f.grief); why.push('recent losses'); }
   const wars = enemiesOf(f).length, allies = alliesOf(f).length;
-  if (wars) { m -= wars * 6; why.push('war'); }
+  if (wars) { m -= Math.min(12, wars * 6); why.push('war'); }
   if (allies) { m += allies * 3; why.push('loyal allies'); }
   if (campsNear(f, 16).length) { m -= 3; why.push('barbarians nearby'); }
+  const tr = f.ruler && TRAITS[f.ruler.trait];
+  if (tr && tr.m) { m += tr.m; why.push(tr.why); }
+  if (f.age >= 4 && f.highSince) { const dec = Math.min(12, Math.floor((s.day - f.highSince) / YEAR) * 2); if (dec) { m -= dec; why.push('a decadent court'); } }
+  if (f.plague) { m -= 12; why.push('plague'); }
   return { m: clamp(m, 0, 100), why };
 }
 function factionDaily(f) {
   const se = season(), dos = dayOfSeason(), pop0 = popOf(f);
-  if (!pop0) return;
+  if (!pop0) { fall(f, 'was abandoned. Its last people are gone'); return; }
   let hungry = 0, starved = 0;
   for (const c of shuffle(fCols(f).slice())) {
     if (f.res.food >= 1) { f.res.food--; c.hun = 0; } else { c.hun++; hungry++; if (c.hun >= 3) { kill(c); starved++; } }
@@ -856,7 +912,7 @@ function factionDaily(f) {
   f.moodWhy = r.why; f.mood += (r.m - f.mood) * 0.15; f.grief *= 0.9;
   const moodK = Math.max(0.3, f.mood / 60);
   const pop = popOf(f), spare = housing(f) - pop;
-  const room = pop < POPCAP[f.age] && s.cols.length < WORLD_CAP;
+  const room = pop < POPCAP[f.age] && s.cols.length < WORLD_CAP && !f.plague;
   if (room && pop >= 2 && spare > 0 && f.res.food >= pop * 1.5 && se !== 3) {
     const rate = 0.012 + 0.006 * builtCount(f, 'chapel') + 0.008 * builtCount(f, 'cathedral') + 0.008 * builtCount(f, 'palace');
     const n = Math.min(spare, Math.floor(pop * rate * moodK + rnd()));
@@ -868,7 +924,10 @@ function factionDaily(f) {
     for (let i = 0; i < n; i++) spawnCol(f, null);
   }
   checkAge(f);
+  rulerDaily(f);
+  if (f.gone) return;
   maybeSplit(f);
+  maybeUnrest(f);
   if (!popOf(f)) fall(f, 'was abandoned. Its last people are gone');
   void dos;
 }
@@ -878,7 +937,8 @@ function fall(f, how) {
   s.buildings = s.buildings.filter(b => b.f !== f.id); dirtyB();
   s.cols = s.cols.filter(c => c.f !== f.id); dirtyC();
   log(`${f.name} ${how}.`, 'bad');
-  toast(`${f.name} has fallen`, 'bad');
+  chron(`${f.name} ${how}.`, 'bad', f);
+  card('A fall', `${f.name} is no more`, `${f.name} ${how}.`, f.color);
   recomputeTerritory();
 }
 function daily() {
@@ -891,6 +951,7 @@ function daily() {
   }
   recomputeTerritory();
   politicsDaily();
+  plagueDaily();
   campsDaily();
   if (--s.evCd <= 0) { s.evCd = ri(2, 5); fireEvent(); }
   if (dayOfSeason() === 1) log({ 0: 'Spring. The fields are worked again.', 1: 'Summer. Long days and steady harvests.', 2: 'Autumn. Richer harvests; the stores fill.', 3: 'Winter. Fields yield little and every hearth needs wood.' }[se]);
@@ -899,14 +960,188 @@ function daily() {
 }
 function checkAge(f) {
   const next = AGES[f.age + 1];
+  if (f.age > 0 && (popOf(f) < AGES[f.age].pop * 0.6 || !anyCount(f, AGES[f.age].mark))) {
+    if (++f.lowDays >= 16) {
+      f.lowDays = 0; f.age--;
+      if (f.age < 4) f.highSince = 0;
+      const why = popOf(f) < AGES[f.age + 1].pop * 0.6 ? 'Too few people remain' : `Its ${BUILD[AGES[f.age + 1].mark].name.toLowerCase()} is lost`;
+      log(`${f.name} has declined to ${an(AGES[f.age].name.toLowerCase())}. ${why}.`, 'bad');
+      chron(`${f.name} declined from ${an(AGES[f.age + 1].name.toLowerCase())} to ${an(AGES[f.age].name.toLowerCase())}.`, 'bad', f);
+      if (f.age >= 2) card('Decline', `${f.name} is ${an(AGES[f.age].name.toLowerCase())} again`, `${why}. The glory of the ${AGES[f.age + 1].name.toLowerCase()} has faded.`, f.color);
+      recomputeTerritory();
+    }
+    return;
+  }
+  f.lowDays = 0;
   if (!next) return;
   if (popOf(f) >= next.pop && builtCount(f, next.mark)) {
     f.age++;
+    if (f.age >= 4 && !f.highSince) f.highSince = s.day;
     const first = !s.records[f.age];
     if (first) s.records[f.age] = { n: f.name, d: s.day, c: f.color };
-    log(`${f.name} is now a ${next.name.toLowerCase()}${first ? `, the first in the vale` : ''}.`, 'age');
-    banner(f.name, next.name);
+    log(`${f.name} is now ${an(next.name.toLowerCase())}${first ? `, the first in the vale` : ''}.`, 'age');
+    if (f.age >= 3) earn(f, 'build');
+    chron(`${f.name} rose to become ${an(next.name.toLowerCase())}${first ? ', the first in the vale' : ''}, under ${rulerTitle(f)}.`, 'age', f);
+    card(first ? 'First in the vale' : 'A new age', `${f.name} is now ${an(next.name)}`, `Under ${rulerTitle(f)}, ${popOf(f)} people.`, f.color);
     recomputeTerritory();
+  }
+}
+
+// ---------- rulers ----------
+function rulerDaily(f) {
+  if (!f.ruler) crown(f);
+  const ry = (s.day - f.ruler.since) / YEAR, war = enemiesOf(f).length > 0;
+  const p = 0.002 + ry * 0.002 + (war ? 0.002 : 0) + (f.plague ? 0.012 : 0);
+  if (rnd() >= p) return;
+  const cause = f.plague && rnd() < 0.6 ? 'died of the plague' : war && rnd() < 0.5 ? 'fell in battle'
+    : ry > 5 ? pick(['died of old age', 'died in their sleep', 'died after a long illness']) : pick(['died of a fever', 'was thrown from a horse', 'choked at a feast', 'drowned crossing a river', 'died in their sleep']);
+  if (!f.ruler.ep) f.ruler.ep = ry > 6 ? 'the Old' : ry < 0.75 ? 'the Brief' : TRAITS[f.ruler.trait].ep;
+  const was = rulerTitle(f), years = Math.max(1, Math.round(ry));
+  const disputed = f.age >= 2 && popOf(f) >= 40 && alive().length < SEC_MAX && (f.mood < 52 || f.ruler.trait === 'weak') && rnd() < 0.45;
+  crown(f);
+  if (disputed) {
+    const r = secede(f, 1, 'pretender');
+    if (r.length) {
+      const n = r[0];
+      const t = `${was} of ${f.name} ${cause}. ${rulerName(f)} took the throne, but a rival claimant, ${rulerName(n)}, seized ${n.name}. Civil war.`;
+      log(t, 'bad'); chron(t, 'bad', f);
+      card('Civil war', `${f.name} is torn in two`, `${was} ${cause}. Two claimants fight for the throne: ${rulerName(f)} holds ${f.name}, ${rulerName(n)} holds ${n.name}.`, f.color);
+      return;
+    }
+  }
+  const t = `${was} of ${f.name} ${cause} after ${years} year${years > 1 ? 's' : ''}. ${rulerName(f)} was crowned, said to be ${f.ruler.trait}.`;
+  log(t, 'pol'); chron(t, '', f);
+  if (f.age >= 4) card('The throne', `${was} is dead`, `${rulerName(f)}, said to be ${f.ruler.trait}, now rules ${f.name}.`, f.color);
+}
+
+// ---------- decline: unrest, civil war, fracture ----------
+function maybeUnrest(f) {
+  if (alive().length >= SEC_MAX || f.age < 2 || popOf(f) < 40) return;
+  if (f.age >= 4) {
+    const dec = f.highSince ? Math.floor((s.day - f.highSince) / YEAR) : 0;
+    if (rnd() < (f.mood < 50 ? 0.002 : 0.0004) + dec * 0.0004) {
+      const was = rulerTitle(f), old = AGES[f.age].name.toLowerCase();
+      const r = secede(f, ri(2, 3), 'fracture');
+      if (r.length) {
+        earn(f, 'split');
+        const names = r.map(n => n.name).join(' and ');
+        const t = `The ${old} of ${f.name} fractured. ${names} broke free of ${was}.`;
+        log(t, 'bad'); chron(t, 'bad', f);
+        card('Collapse', `The ${old} of ${f.name} has shattered`, `${names} declared themselves free. ${f.name} keeps its capital and ${popOf(f)} people.`, f.color);
+      }
+      return;
+    }
+  }
+  if (f.mood < 38 && rnd() < 0.002 + (38 - f.mood) * 0.0006) {
+    const why = (f.moodWhy || []).filter(w => !['full granaries', 'proud landmarks', 'loyal allies'].includes(w) && !/wise|just|pious/.test(w)).slice(0, 2).join(' and ') || 'their rulers';
+    const r = secede(f, 1, 'revolt');
+    if (r.length) {
+      const n = r[0];
+      const t = `Fed up with ${why}, the people of ${n.name} rose against ${rulerTitle(f)} of ${f.name} and crowned ${rulerName(n)}.`;
+      log(t, 'bad'); chron(t, 'bad', f);
+      card('Revolt', `${n.name} rises against ${f.name}`, `Fed up with ${why}, ${popOf(n)} people took up arms under ${rulerName(n)}.`, n.color);
+    }
+  }
+}
+function secede(f, nSeats, kind) {
+  const tc = tcOf(f);
+  if (!tc) return [];
+  const cand = fBuild(f).filter(b => b !== tc && b.built && (b.type === 'tc' || HOUSING.includes(b.type)));
+  const seats = [];
+  for (let i = 0; i < nSeats; i++) {
+    let best = null, bs = 0;
+    for (const b of cand) {
+      if (seats.includes(b)) continue;
+      const d = Math.min(Math.hypot(b.x - tc.x, b.y - tc.y), ...seats.map(q => Math.hypot(b.x - q.x, b.y - q.y)));
+      const sc = d + (b.type === 'tc' ? 4 : 0) + rnd();
+      if (d >= 5 && sc > bs) { bs = sc; best = b; }
+    }
+    if (best) seats.push(best);
+  }
+  if (!seats.length) return [];
+  const centers = [tc].concat(seats);
+  const nearest = (x, y) => { let bi = 0, bd = 1e9; centers.forEach((c, i) => { const d = Math.hypot(c.x - x, c.y - y); if (d < bd) { bd = d; bi = i; } }); return bi; };
+  const gB = centers.map(() => []), gC = centers.map(() => []);
+  for (const b of fBuild(f)) if (b !== tc) gB[nearest(b.x, b.y)].push(b);
+  for (const c of fCols(f)) if (c.st !== 'exodus') gC[nearest(c.x, c.y)].push(c);
+  for (let i = 1; i < centers.length; i++) if (gB[i].length < 3 || gC[i].length < 6) { gB[0].push(...gB[i]); gC[0].push(...gC[i]); gB[i] = null; }
+  if (gC[0].length < 6 || !gB.some((g, i) => i && g)) return [];
+  const total = popOf(f), out = [];
+  for (let i = 1; i < centers.length; i++) {
+    if (!gB[i]) continue;
+    const seat = centers[i];
+    const n = foundFaction(null, seat.x, seat.y, f, true);
+    seat.type = 'tc'; seat.built = true; seat.prog = 0; delete seat.from;
+    for (const b of gB[i]) b.f = n.id;
+    for (const c of gC[i]) { c.f = n.id; setJob(c, c.job); }
+    const share = gC[i].length / total;
+    for (const k of ['food', 'wood', 'stone']) { const g = Math.floor(f.res[k] * share); f.res[k] -= g; n.res[k] = g; }
+    n.mood = clamp(f.mood + 15, 45, 80);
+    if (kind === 'pretender') n.ruler.ep = EPITHETS.rebel;
+    out.push(n);
+  }
+  dirtyB(); dirtyC();
+  for (const c of fCols(f)) setJob(c, c.job);
+  for (const n of out) { let a = 0; while (a + 1 < f.age && popOf(n) >= AGES[a + 1].pop) a++; n.age = a; n.lowDays = -YEAR; }
+  let pa = 0; while (pa + 1 <= f.age && anyCount(f, AGES[pa + 1].mark)) pa++;
+  if (pa < f.age) { f.age = pa; if (f.age < 4) f.highSince = 0; }
+  f.grief += 8;
+  for (const n of out) {
+    const k = key(f.id, n.id);
+    if (kind === 'fracture') { s.rel[k] = rnd() < 0.4 ? -55 : -25; s.stance[k] = s.rel[k] <= -40 ? 'war' : 'neutral'; }
+    else { s.rel[k] = -50; s.stance[k] = 'war'; }
+    s.war[k] = 0;
+    for (const o of alive()) {
+      if (o === f || o === n || out.includes(o)) continue;
+      const r = relOf(f, o) * -0.3 + ri(-10, 10);
+      s.rel[key(o.id, n.id)] = r; s.stance[key(o.id, n.id)] = 'neutral';
+    }
+  }
+  for (let i = 0; i < out.length; i++) for (let j = i + 1; j < out.length; j++) { const k = key(out[i].id, out[j].id); s.rel[k] = ri(0, 30); s.stance[k] = 'neutral'; }
+  recomputeTerritory();
+  return out;
+}
+
+// ---------- plague ----------
+function startPlague(f, from) {
+  f.plague = ri(9, 15); f.plagueDead = 0;
+  f.plagueName = from ? from.plagueName : pick(PLAGUES);
+  const nm = f.plagueName[0].toUpperCase() + f.plagueName.slice(1);
+  if (from) {
+    log(`${nm} spread from ${from.name} to ${f.name}.`, 'bad'); chron(`${nm} spread from ${from.name} to ${f.name}.`, 'bad', f);
+    toast(`${nm} reached ${f.name}`, 'bad');
+  } else {
+    log(`${nm} broke out in ${f.name}.`, 'bad'); chron(`${nm} broke out in ${f.name}.`, 'bad', f);
+    card('Plague', `${nm} in ${f.name}`, `A sickness is spreading through the streets. Trade and borders will carry it to the neighbors.`, f.color);
+  }
+}
+function plagueDaily() {
+  const fs = alive();
+  const total = s.cols.length;
+  if (!fs.some(f => f.plague) && total > 120 && rnd() < 0.004 + total / 250000) {
+    const ok = fs.filter(f => popOf(f) >= 30 && !(f.immune > s.day));
+    let r = rnd() * ok.reduce((n, f) => n + popOf(f), 0);
+    for (const f of ok) if ((r -= popOf(f)) <= 0) { startPlague(f, null); break; }
+  }
+  for (const f of fs) {
+    if (!f.plague || f.gone) continue;
+    f.plague--;
+    const n = killN(f, Math.round(popOf(f) * (0.008 + rnd() * 0.02) + rnd() * 0.8));
+    f.plagueDead += n;
+    for (const o of fs) {
+      if (o === f || o.gone || o.plague || o.immune > s.day) continue;
+      const k = key(f.id, o.id), c = s.contact[k] || 0, st = stanceOf(f, o);
+      const p = (c ? 0.04 + Math.min(0.04, c * 0.002) : 0) + (st === 'ally' ? 0.03 : 0) + (st !== 'war' && builtCount(f, 'market') && builtCount(o, 'market') ? 0.015 : 0);
+      if (rnd() < p) startPlague(o, f);
+    }
+    if (!f.plague) {
+      f.immune = s.day + YEAR * 3;
+      const nm = f.plagueName[0].toUpperCase() + f.plagueName.slice(1);
+      log(`${nm} has left ${f.name}. It took ${f.plagueDead} lives.`, f.plagueDead ? 'bad' : '');
+      chron(`${nm} left ${f.name} after taking ${f.plagueDead} lives.`, 'bad', f);
+      if (f.plagueDead > popOf(f) * 0.2) earn(f, 'plague');
+    }
+    if (!popOf(f)) fall(f, `was emptied by ${f.plagueName}`);
   }
 }
 function maybeSplit(f) {
@@ -937,6 +1172,7 @@ function maybeSplit(f) {
   else if (st === 'ally') log(`${size} settlers left ${f.name} on good terms and founded ${n.name}, sworn allies from the first day.`, 'good');
   else log(`${size} settlers left ${f.name} to found ${n.name}. Their loyalty is uncertain.`);
   toast(`${n.name} was founded by settlers from ${f.name}`, st === 'war' ? 'bad' : st === 'ally' ? 'good' : '');
+  chron(st === 'war' ? `Rebels broke away from ${f.name} and founded ${n.name} under ${rulerTitle(n)}.` : `Settlers from ${f.name} founded ${n.name} under ${rulerTitle(n)}.`, st === 'war' ? 'bad' : '', n);
 }
 function findSite(minFromTc, minFromCamp) {
   let best = null, bs = -1e9;
@@ -961,10 +1197,27 @@ function setStance(a, b, st) {
   const k = key(a.id, b.id), old = s.stance[k] || 'neutral';
   if (old === st) return;
   s.stance[k] = st;
-  if (st === 'war') { s.war[k] = 0; log(`${a.name} and ${b.name} are at war.`, 'bad'); toast(`War between ${a.name} and ${b.name}`, 'bad'); }
-  else if (st === 'ally') { log(`${a.name} and ${b.name} formed an alliance.`, 'good'); toast(`${a.name} and ${b.name} are now allies`, 'good'); }
-  else if (old === 'war') { log(`${a.name} and ${b.name} made peace.`, 'good'); toast(`Peace between ${a.name} and ${b.name}`, 'good'); }
-  else log(`The alliance between ${a.name} and ${b.name} fell apart.`, 'pol');
+  if (st === 'war') {
+    s.war[k] = 0;
+    const proud = f => f.ruler && (f.ruler.trait === 'proud' || f.ruler.trait === 'cruel') ? 30 : 0;
+    const [ag, df] = military(a) + proud(a) >= military(b) + proud(b) ? [a, b] : [b, a];
+    log(`${a.name} and ${b.name} are at war.`, 'bad');
+    if (s.broke[k] && s.day - s.broke[k] < YEAR * 2) {
+      chron(`${ag.name} betrayed its old ally ${df.name}. ${rulerTitle(ag)} declared war.`, 'bad', ag);
+      card('Betrayal', `${ag.name} betrays ${df.name}`, `Allies until recently, ${rulerTitle(ag)} has turned on ${rulerTitle(df)}.`, ag.color);
+    } else {
+      chron(`${rulerTitle(ag)} of ${ag.name} declared war on ${df.name}.`, 'bad', ag);
+      if (Math.max(ag.age, df.age) >= 3) card('War', `${ag.name} declares war on ${df.name}`, `${rulerTitle(ag)} marches against ${rulerTitle(df)}.`, ag.color);
+    }
+  }
+  else if (st === 'ally') { log(`${a.name} and ${b.name} formed an alliance.`, 'good'); toast(`${a.name} and ${b.name} are now allies`, 'good'); chron(`${a.name} and ${b.name} swore an alliance.`, 'good', a); }
+  else if (old === 'war') {
+    const days = s.war[k] || 0;
+    log(`${a.name} and ${b.name} made peace.`, 'good'); toast(`Peace between ${a.name} and ${b.name}`, 'good');
+    chron(`After ${days} days of war, ${a.name} and ${b.name} made peace.`, 'good', a);
+    if (days > 40) earn(rnd() < 0.5 ? a : b, 'peace');
+  }
+  else { s.broke[k] = s.day; log(`The alliance between ${a.name} and ${b.name} fell apart.`, 'pol'); chron(`The alliance between ${a.name} and ${b.name} fell apart.`, '', a); }
 }
 function politicsDaily() {
   const fs = alive();
@@ -988,6 +1241,7 @@ function politicsDaily() {
     const top = fs.slice().sort((x, y) => popOf(y) - popOf(x));
     if (fs.length >= 3 && a.age >= 3 && b.age >= 3 && top.slice(0, 2).includes(a) && top.slice(0, 2).includes(b)) r -= 0.3;
     if (alliesOf(a).length + alliesOf(b).length >= 4) r -= 0.2;
+    for (const f of [a, b]) { const t = f.ruler && f.ruler.trait; if (contact && (t === 'proud' || t === 'cruel')) r -= 0.15; if (t === 'wise' || t === 'just') r += 0.08; }
     r = clamp(r, -100, 100);
     s.rel[k] = r;
     if (st === 'neutral' && r >= 50) setStance(a, b, 'ally');
@@ -1055,7 +1309,15 @@ function absorb(a, b) {
   b.gone = true;
   a.grief += 2;
   log(`${a.name} conquered ${b.name}. Its ${n} people now answer to ${a.name}.`, 'bad');
-  toast(`${a.name} conquered ${b.name}`, 'bad');
+  const kin = b.parent === a.id || a.parent === b.id;
+  earn(a, 'conquer');
+  if (kin) {
+    chron(`${rulerTitle(a)} crushed ${b.name} and brought its ${n} people back under ${a.name}.`, 'bad', a);
+    card('Reunited', `${a.name} reclaims ${b.name}`, `${rulerTitle(a)} has crushed the breakaway. ${n} people answer to ${a.name} again.`, a.color);
+  } else {
+    chron(`${rulerTitle(a)} of ${a.name} conquered ${b.name} and its ${n} people.`, 'bad', a);
+    card('Conquest', `${a.name} conquers ${b.name}`, `${rulerTitle(b)} is overthrown. ${n} people now answer to ${rulerTitle(a)}.`, a.color);
+  }
   recomputeTerritory();
 }
 
@@ -1078,7 +1340,7 @@ function campsDaily() {
     if (site) {
       const used = new Set(s.camps.map(c => c.name));
       const name = pick(CAMP_NAMES.filter(x => !used.has(x))) || 'Outlaws';
-      const c = { id: s.nid++, name, x: site.x, y: site.y, str: 3 + year() + Math.floor(total / 20), tents: [], founded: s.day, gone: false };
+      const c = { id: s.nid++, name, x: site.x, y: site.y, str: Math.min(30, 3 + year() + Math.floor(total / 20)), tents: [], founded: s.day, gone: false };
       for (const [dx, dy] of [[0, 0]].concat(shuffle(N4.slice()).slice(0, 2))) {
         const T = tile(site.x + dx, site.y + dy);
         if (T && (T.t === 0 || T.t === 1) && !T.b && !T.c && !T.own) { T.c = c.id; if (T.t === 1) { T.t = 0; T.amt = 0; } T.sap = 0; c.tents.push({ x: site.x + dx, y: site.y + dy }); }
@@ -1090,7 +1352,7 @@ function campsDaily() {
   }
   for (const c of s.camps) {
     if (c.gone) continue;
-    c.str += 0.25 + total / 1200;
+    c.str = Math.min(45, c.str + 0.25 + total / 1200);
     const str = Math.floor(c.str);
     const fs = alive().map(f => ({ f, d: Math.hypot(f.cx - c.x, f.cy - c.y) })).sort((p, q) => p.d - q.d);
     if (!fs.length) continue;
@@ -1099,6 +1361,7 @@ function campsDaily() {
       endCamp(c);
       addRes(hunter.f, 'food', 20); addRes(hunter.f, 'wood', 20); addRes(hunter.f, 'stone', 10);
       log(`Soldiers of ${hunter.f.name} burned the ${c.name} camp and took their plunder.`, 'good');
+      chron(`${rulerTitle(hunter.f)} of ${hunter.f.name} burned the barbarian camp of the ${c.name}.`, 'good', hunter.f);
       toast(`${hunter.f.name} destroyed the ${c.name}`, 'good');
       continue;
     }
@@ -1437,7 +1700,7 @@ function camTarget() {
 }
 function drawLabels() {
   const kc = cv.width / cam.w / dpr, cw = cv.width / dpr;
-  const items = alive().map(f => { const t = tcOf(f) || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.name} · ${popOf(f)}`, col: '#ffffff', dot: f.color, sel: f.id === ui.sel }; })
+  const items = alive().map(f => { const t = tcOf(f) || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${popOf(f)}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, sel: f.id === ui.sel }; })
     .concat(camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })));
   ctx.font = `700 ${kc > 20 ? 12 : 10.5}px Figtree, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const it of items) {
@@ -1511,6 +1774,15 @@ function draw(rdt, now) {
 // ---------- UI ----------
 function toast(text, k) { const t = $('toast'); t.textContent = text; t.className = 'toast ' + (k || ''); t.hidden = false; ui.toastT = 3; }
 function banner(name, age) { $('bansmall').textContent = name; $('banbig').textContent = `A ${age}`; $('banner').hidden = false; ui.bannerT = 4; }
+function showCard() {
+  while (ui.cards.length && ui.cards[0].d < s.day - 12) ui.cards.shift();
+  const c = ui.cards.shift();
+  if (!c) return;
+  $('cardk').textContent = c.k; $('cardt').textContent = c.t; $('cardx').textContent = c.x; $('cardbar').style.background = c.c;
+  const el = $('card'); el.hidden = true; void el.offsetWidth; el.hidden = false;
+  ui.cardT = 6;
+}
+$('card').addEventListener('click', () => { ui.cardT = 0; $('card').hidden = true; showCard(); });
 function setSpeed(v) {
   if (!s || s.over) return;
   s.speed = v;
@@ -1639,7 +1911,8 @@ function refreshUI() {
     setHtml('selname', `<i style="background:${f.color}"></i>${f.name}`);
     const why = (f.moodWhy || []).join(', ');
     const rels = alive().filter(o => o !== f).map(o => `${STANCE[stanceOf(f, o)].toLowerCase()} with ${o.name}`).join('; ');
-    $('steward').innerHTML = `<b>Steward:</b> ${f.steward}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}`;
+    const reign = f.ruler ? Math.floor((s.day - f.ruler.since) / YEAR) : 0;
+    $('steward').innerHTML = `<b>Ruler:</b> ${rulerTitle(f)}, ${f.ruler ? f.ruler.trait : ''}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${f.plagueName[0].toUpperCase() + f.plagueName.slice(1)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.steward}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}`;
     for (const k of Object.keys(JOBS)) {
       const n = fCols(f).filter(o => o.job === k).length;
       $('n-' + k).textContent = n;
@@ -1673,6 +1946,19 @@ function refreshUI() {
     }
   } else if (logDirty) {
     $('miles').innerHTML = AGES.slice(1).map((a, i) => { const r = s.records[i + 1]; return `<span class="mile${r ? ' done' : ''}">First ${a.name.toLowerCase()}${r ? `: ${r.n}` : ''}</span>`; }).join('');
+    const hist = $('hist'); hist.textContent = '';
+    let ys = null, ul2 = null;
+    for (const e of s.chron) {
+      if (!ys || ys !== e.y) {
+        ys = e.y; const sec = document.createElement('section'); const h = document.createElement('h3'); h.textContent = 'Year ' + e.y;
+        ul2 = document.createElement('ul'); sec.appendChild(h); sec.appendChild(ul2); hist.appendChild(sec);
+      }
+      const li = document.createElement('li'); if (e.k) li.className = e.k;
+      const dot = document.createElement('i'); if (e.c) dot.style.background = e.c;
+      const tx = document.createElement('span'); const sm = document.createElement('small'); sm.textContent = SEASONS[e.se];
+      tx.appendChild(sm); tx.appendChild(document.createTextNode(e.text));
+      li.appendChild(dot); li.appendChild(tx); ul2.appendChild(li);
+    }
     const ul = $('log'); ul.textContent = '';
     for (const e of s.log) {
       const li = document.createElement('li'); if (e.k) li.className = e.k;
@@ -1704,6 +1990,8 @@ function frame(now) {
   draw(rdt, now);
   if (ui.toastT > 0 && (ui.toastT -= rdt) <= 0) $('toast').hidden = true;
   if (ui.bannerT > 0 && (ui.bannerT -= rdt) <= 0) $('banner').hidden = true;
+  if (ui.cardT > 0) { if ((ui.cardT -= rdt) <= 0) { $('card').hidden = true; showCard(); } }
+  else if (ui.cards.length && $('setup').hidden) showCard();
   if (overTimer > 0 && (overTimer -= rdt) <= 0) restart();
   uiAcc += rdt;
   if (uiAcc > 0.3) { uiAcc = 0; refreshUI(); }
@@ -1716,6 +2004,8 @@ function start(data) {
   const fresh = !s;
   if (!s) newWorld(3);
   dirtyB(); dirtyC();
+  s.chron = s.chron || []; s.broke = s.broke || {};
+  for (const f of s.factions) { if (!f.ruler) crown(f); if (f.lowDays === undefined) f.lowDays = 0; if (f.age >= 4 && !f.highSince) f.highSince = s.day; }
   buildStatic();
   resize();
   setSpeed(s.speed === undefined ? 3 : s.speed);
@@ -1727,7 +2017,7 @@ function start(data) {
 window.addEventListener('resize', resize);
 document.addEventListener('visibilitychange', () => { if (document.hidden && s) save(); });
 window.claude?.hot?.snapshot?.(() => ({ save: JSON.stringify(s) }));
-window.__ev = { get s() { return s; }, step, newWorld, popOf, F, military };
+window.__ev = { get s() { return s; }, step, newWorld, popOf, F, military, rulerTitle, secede, startPlague };
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
 </script>
