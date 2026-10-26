@@ -13,11 +13,16 @@ What else happens along the way:
 - **Breakaways:** groups occasionally leave to found new settlements. These are full settlements in their own right, and the parent settlement's mood decides whether they start as friends or enemies.
 - **Rulers and the chronicle:** every settlement has a named ruler with a trait (wise, just, pious, proud, weak or cruel) that affects mood and diplomacy. Rulers die and are succeeded, and they earn epithets such as "the Conqueror" or "the Brief". The Chronicle tab keeps a year-by-year history of the vale, and big moments such as wars, betrayals, conquests, collapses and plagues pop up as cards over the map.
 - **Decline and collapse:** plagues break out and spread along borders, alliances and trade. Unhappy realms revolt, disputed successions start civil wars, and aging empires can shatter into successor states. A settlement that loses its people or its landmark falls back an age.
+- **An ever-expanding map:** the world is made of 16×16 chunks generated from a seed. As settlements grow toward the edge, or there is no room left to found a new one, scouts map new land and the world grows in that direction. More land allows more settlements, up to 10, while the total population stays capped at 900 to keep phones fast. The camera follows the latest big event; the "Whole world" button zooms out to show everything.
 - **Barbarian camps:** they appear in the unclaimed wilds, grow stronger and raid whoever is closest.
 - **Seasons and mood:** farms yield little in winter and every hearth burns wood. Food, housing, cold, losses, landmarks, wars and allies all affect mood.
 - **Controls:** speed buttons (Pause, 1×, 3×, 10×); Realm, Politics and Chronicle tabs; and tap a settlement to follow it.
 
-Progress saves to the browser's local storage.
+Progress saves to the browser's local storage. Saves from the earlier fixed-size map are migrated automatically.
+
+### Code layout
+
+The game is still one file, organised into classes: `World` (chunked tiles, terrain generation, pathfinding), `Settlement`, `Colonist`, `Steward` (the settlement AI), `Ruler`, `Camp`, `Diplomacy`, `Chronicle`, `Game` (the clock and save/load), `Renderer` (per-chunk cached drawing and the camera) and `Interface` (panels and cards).
 
 ### Run it
 
