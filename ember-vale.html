@@ -166,6 +166,10 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .sheet button { padding: 12px 14px; border-radius: 10px; border: 0; background: var(--accent); color: var(--accent-ink); font: 600 0.92rem var(--f-body); cursor: pointer; }
 .rel { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 8px; align-items: center; font-size: 0.82rem; }
 .rel .who { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.faith { display: flex; flex-direction: column; gap: 2px; font-size: 0.82rem; }
+.faith .who { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+.faith .who i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+.faith .tp { color: var(--muted); padding-left: 15px; }
 .rel .who i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .relbar { height: 6px; background: var(--bg); border-radius: 3px; position: relative; overflow: hidden; }
 .relbar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line); }
@@ -241,6 +245,8 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
       <div class="counts" id="counts"></div>
     </div>
     <div class="pane" id="pane-pol" hidden>
+      <div class="sub">Faiths</div>
+      <div class="sites" id="faiths"></div>
       <div class="sub">Relations</div>
       <div class="sites" id="rels"></div>
       <div class="sub">Recent politics</div>
@@ -907,6 +913,7 @@ class Settlement {
     Object.assign(this, rest);
     if (this.note === undefined) this.note = typeof steward === 'string' ? steward : '';
     if (this.ruler && !(this.ruler instanceof Ruler)) this.ruler = new Ruler(this.ruler);
+    if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
   }
   static found(name, x, y, parent) {
     const used = new Set(G.factions.map(f => f.name));
@@ -915,7 +922,8 @@ class Settlement {
     const color = COLORS.find(c => !usedC.has(c)) || pick(COLORS);
     const f = new Settlement({ id: G.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10 }, mood: 62, grief: 0, moodWhy: [],
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
-      stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {} });
+      stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
+      culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40 });
     f.ruler = Ruler.crown(f);
     return f;
   }
@@ -1338,6 +1346,10 @@ class Diplomacy {
       if (this.broke[k] && G.day - this.broke[k] < YEAR * 2) {
         C.record(`${ag.name} betrayed its old ally ${df.name}. ${ag.title} declared war.`, 'bad', ag);
         C.card('Betrayal', `${ag.name} betrays ${df.name}`, `Allies until recently, ${ag.title} has turned on ${df.title}.`, ag);
+      } else if (this.holy) {
+        const fa = G.faiths.get(ag.faith);
+        C.record(`${ag.title} of ${ag.name} declared a holy war on the unbelievers of ${df.name}${fa ? `, in the name of ${fa.name}` : ''}.`, 'bad', ag);
+        C.card('Holy war', `${ag.name} declares a holy war on ${df.name}`, `${fa ? `${upper(fa.name)} calls` : 'The priests call'} the faithful to march against ${df.title}.`, ag);
       } else {
         C.record(`${ag.title} of ${ag.name} declared war on ${df.name}.`, 'bad', ag);
         if (Math.max(ag.age, df.age) >= 3) C.card('War', `${ag.name} declares war on ${df.name}`, `${ag.title} marches against ${df.title}.`, ag);
@@ -1379,12 +1391,15 @@ class Diplomacy {
       if (contact && Math.max(pa, pb) > 2 * Math.min(pa, pb) + 5) r -= 0.15;
       if (fs.length >= 3 && a.age >= 3 && b.age >= 3 && top.includes(a) && top.includes(b)) r -= 0.3;
       if (a.allies.length + b.allies.length >= 4) r -= 0.2;
+      if (a.culture && a.culture === b.culture) r += 0.05;
+      if (a.faith && b.faith) r += a.faith === b.faith ? 0.12 : -0.05 * (a.zeal + b.zeal) / 100;
       for (const f of [a, b]) { const t = f.ruler.trait; if (contact && (t === 'proud' || t === 'cruel')) r -= 0.15; if (t === 'wise' || t === 'just') r += 0.08; }
       r = clamp(r, -100, 100);
       this.rel[k] = r;
       if (st === 'neutral' && r >= 50) this.set(a, b, 'ally');
       else if (st === 'ally' && r < 30) this.set(a, b, 'neutral');
       else if (st === 'neutral' && r <= -40) this.set(a, b, 'war');
+      else if (st === 'neutral' && r <= -25 && a.faith && b.faith && a.faith !== b.faith && Math.max(a.zeal, b.zeal) >= 65 && rnd() < 0.012) { this.holy = true; this.set(a, b, 'war'); this.holy = false; }
       else if (st === 'war' && r >= -15) this.set(a, b, 'neutral');
       if (this.stance[k] !== 'war') {
         if (!this.open[k] && contact && r >= 25 && rnd() < 0.03) this.openBorders(a, b);
@@ -1418,7 +1433,8 @@ class Diplomacy {
       { w: 1, ok: st === 'neutral' && r > 15, d: 15, t: `${a.name} and ${b.name} swore oaths of friendship.` },
       { w: 1, ok: G.camps().length > 0 && st !== 'war', d: 10, t: `${a.name} and ${b.name} agreed to stand together against the barbarians.` },
       { w: 2, ok: st !== 'war' && a.pop > b.pop * 2 && contact > 0, d: -15, t: `${a.name} demanded tribute from ${b.name} and was refused.` },
-      { w: 2, ok: faith(a) > 0 && faith(b) > 0, d: -15, t: `Priests of ${a.name} denounced the faith of ${b.name} as heresy.` },
+      { w: 2, ok: faith(a) > 0 && faith(b) > 0 && a.faith !== b.faith, d: -15, t: `Priests of ${a.name} denounced the faith of ${b.name} as heresy.` },
+      { w: 1, ok: a.faith && a.faith === b.faith && st !== 'war', d: 14, t: `Pilgrims from ${a.name} were welcomed at the shrines of ${b.name}.` },
       { w: 1, ok: st === 'ally', d: -20, t: `${a.name} caught spies from its ally ${b.name}.` },
     ].filter(o => o.ok);
     let rr = rnd() * opts.reduce((n, o) => n + o.w, 0), o = opts[0];
@@ -1467,10 +1483,92 @@ class Diplomacy {
     }
     G.recomputeTerritory();
   }
-  toJSON() { return { rel: this.rel, stance: this.stance, war: this.war, contact: this.contact, broke: this.broke }; }
+  toJSON() { return { rel: this.rel, stance: this.stance, war: this.war, contact: this.contact, broke: this.broke, open: this.open }; }
 }
 
 // ========== plague ==========
+// ---------- culture and religion ----------
+// Each realm carries a culture (inherited from the settlement that founded it) and, once it has a chapel,
+// a faith. Faiths spread along borders, alliances and trade, split in schisms, and sour or warm relations.
+const FAITH_HEAD = ['The Church of', 'The Way of', 'The Order of', 'The Cult of', 'The Light of', 'The Path of'];
+const FAITH_TAIL = ['the Dawn', 'the Ember', 'the Deep Well', 'the Seven Stars', 'the Green Mother', 'the Iron Saint', 'the Still Water', 'the Long Night', 'the Harvest', 'the Open Hand', 'the Burning Oak', 'the Silver Moon'];
+const FAITH_COLORS = ['#f2d16b', '#eeeeee', '#7fb7e6', '#c77dff', '#ff9a6b', '#6bd6a8', '#e0607e', '#9aa0ff'];
+class Faiths {
+  constructor(d) { this.list = (d && d.list) || []; this.nid = (d && d.nid) || 1; }
+  static cultureOf(name) { const w = name.split(' ').pop(); return `${w.replace(/(ford|hold|mere|vale|wick|by|ton|gate|ham|stead|brook|bridge|crest|hill|harbour|water|march|moor|cliff|well|rush|bury|spur|haven|dale)$/i, '') || w}folk`; }
+  say(text, k, f) { G.chron.record(text, k, f); G.chron.note(text, 'pol'); }
+  get(id) { return this.list.find(x => x.id === id); }
+  name(id) { const x = this.get(id); return x ? x.name : 'no faith'; }
+  holy(f) { return G.faiths.list.some(x => x.holy === f.id && !x.gone); }
+  found(f, from) {
+    const used = new Set(this.list.filter(x => !x.gone).map(x => x.name));
+    let name;
+    if (from) name = `${pick(['The Reformed', 'The True', 'The Old', 'The Free'])} ${from.name.replace(/^The /, '')}`;
+    else { const tails = FAITH_TAIL.filter(t => ![...used].some(u => u.endsWith(t))); name = `${pick(FAITH_HEAD)} ${pick(tails.length ? tails : FAITH_TAIL)}`; }
+    const usedC = new Set(this.list.filter(x => !x.gone).map(x => x.color));
+    const x = { id: this.nid++, name, color: FAITH_COLORS.find(c => !usedC.has(c)) || pick(FAITH_COLORS), holy: f.id, founded: G.day, parent: from ? from.id : 0, gone: false };
+    this.list.push(x);
+    f.faith = x.id;
+    return x;
+  }
+  strength(f) { return f.pop * (0.5 + f.zeal / 100) * (1 + f.builtCount('chapel') + 2 * f.builtCount('cathedral')); }
+  convert(f, x, how) {
+    const old = this.get(f.faith);
+    f.faith = x.id; f.zeal = Math.max(25, f.zeal - 15);
+    this.say(how || `${f.name} turned from ${old ? old.name : 'the old gods'} to ${x.name}.`, 'pol', f);
+  }
+  daily() {
+    const fs = G.alive(), dip = G.dip;
+    for (const f of fs) {
+      // zeal drifts toward what its ruler and churches make it
+      const want = 30 + (f.ruler.trait === 'pious' ? 25 : 0) + (f.ruler.trait === 'wise' ? -5 : 0) + 5 * Math.min(3, f.builtCount('chapel')) + 15 * Math.min(1, f.builtCount('cathedral')) + (this.holy(f) ? 10 : 0) + (f.enemies.some(o => o.faith && o.faith !== f.faith) ? 8 : 0);
+      f.zeal = clamp((f.zeal || 40) + (want - (f.zeal || 40)) * 0.05, 0, 100);
+      if (f.faith && this.get(f.faith) && !this.get(f.faith).gone) continue;
+      if (!f.builtCount('chapel')) continue;
+      // a realm's first chapel: take up a neighbour's faith, or found its own
+      const near = fs.filter(o => o !== f && o.faith && (dip.contact[key(f.id, o.id)] || dip.stanceOf(f, o) === 'ally'));
+      const best = near.sort((a, b) => this.strength(b) - this.strength(a))[0];
+      if (best && rnd() < 0.6) { const x = this.get(best.faith); f.faith = x.id; this.say(`The priests of ${f.name} took up ${x.name}, the faith of ${best.name}.`, 'pol', f); }
+      else { const x = this.found(f); this.say(`${x.name} was born in ${f.name}. ${f.title} named it the one true faith.`, 'good', f); if (f.age >= 2) G.chron.card('A new faith', `${x.name}`, `Born in ${f.name}, it will spread wherever its priests can walk.`, f); }
+    }
+    // faiths spread to neighbours, allies and trading partners
+    for (let i = 0; i < fs.length; i++) for (let j = i + 1; j < fs.length; j++) {
+      const a = fs[i], b = fs[j];
+      if (!a.faith || !b.faith || a.faith === b.faith) continue;
+      const k = key(a.id, b.id), st = dip.stanceOf(a, b);
+      if (st === 'war' || !(dip.contact[k] || st === 'ally' || dip.isOpen(a, b))) continue;
+      const sa = this.strength(a), sb = this.strength(b);
+      const [w, l, sw, sl] = sa >= sb ? [a, b, sa, sb] : [b, a, sb, sa];
+      if (this.holy(l)) continue;
+      const p = 0.0025 * (sw / (sw + sl + 1)) * (1.5 - l.zeal / 100) * (dip.isOpen(a, b) ? 1.5 : 1);
+      if (rnd() < p) this.convert(l, this.get(w.faith), `Missionaries from ${w.name} won ${l.name} over to ${this.get(w.faith).name}.`);
+    }
+    // once a year, a large faith may split
+    if (G.day % YEAR === 3) for (const x of this.list.filter(x => !x.gone)) {
+      const members = fs.filter(f => f.faith === x.id);
+      const holyR = G.F(x.holy);
+      if (members.length < 3 || !holyR || holyR.gone || rnd() > 0.3) continue;
+      const rebel = members.filter(f => f !== holyR).sort((p, q) => dip.relOf(p, holyR) - dip.relOf(q, holyR))[0];
+      if (!rebel || dip.relOf(rebel, holyR) > 15) continue;
+      const nx = this.found(rebel, x);
+      const followers = members.filter(f => f !== rebel && f !== holyR && dip.relOf(f, rebel) > dip.relOf(f, holyR) + 10);
+      for (const f of followers) { f.faith = nx.id; }
+      this.say(`Schism: ${rebel.name} broke with the priests of ${holyR.name} and founded ${nx.name}${followers.length ? `. ${followers.map(f => f.name).join(' and ')} followed` : ''}.`, 'bad', rebel);
+      G.chron.card('Schism', `${x.name} splits`, `${rebel.name} broke away to found ${nx.name}${followers.length ? `, taking ${followers.length} realm${followers.length > 1 ? 's' : ''} with it` : ''}.`, rebel);
+      dip.rel[key(rebel.id, holyR.id)] = (dip.rel[key(rebel.id, holyR.id)] || 0) - 25;
+    }
+    // faiths with no believers left fade from the world; a fallen holy city passes to the largest believer
+    for (const x of this.list) {
+      if (x.gone) continue;
+      const members = fs.filter(f => f.faith === x.id);
+      if (!members.length) { x.gone = true; this.say(`${x.name} faded away. No realm keeps its faith any more.`, ''); continue; }
+      const h = G.F(x.holy);
+      if (!h || h.gone || h.faith !== x.id) { const nh = members.sort((p, q) => q.pop - p.pop)[0]; x.holy = nh.id; }
+    }
+  }
+  toJSON() { return { list: this.list, nid: this.nid }; }
+}
+
 const Plague = {
   start(f, from) {
     f.plague = ri(9, 15); f.plagueDead = 0;
@@ -1543,7 +1641,7 @@ class Game {
   constructor() {
     this.v = 4; this.day = 1; this.t = 0; this.speed = 3; this.world = null;
     this.buildings = []; this.cols = []; this.factions = []; this.camps_ = [];
-    this.dip = new Diplomacy(); this.chron = new Chronicle();
+    this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths();
     this.nid = 1; this.evCd = 4; this.records = {}; this.over = false; this.startN = 3;
     this._b = null; this._bid = null; this._c = null; this._f = null; this._own = null;
   }
@@ -1735,6 +1833,7 @@ class Game {
     this.expand();
     this.dip.daily();
     Plague.daily();
+    this.faiths.daily();
     Camp.spawnDaily();
     const total = this.cols.length;
     for (const c of this.camps()) c.daily(total);
@@ -1770,7 +1869,7 @@ class Game {
   // ---------- saving and loading ----------
   toJSON() {
     return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; g.setup(n); return g; }
   static load(d) {
@@ -1785,7 +1884,7 @@ class Game {
     g.cols = d.cols.map(c => new Colonist(c));
     g.factions = d.factions.map(f => new Settlement(f));
     g.camps_ = d.camps.map(c => new Camp(c));
-    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron);
+    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths);
     g.relink();
     return g;
   }
@@ -2186,7 +2285,7 @@ class Renderer {
   }
   drawLabels() {
     const ctx = this.ctx, cam = this.cam, kc = this.cv.width / cam.w / this.dpr, cw = this.cv.width / this.dpr, chh = this.cv.height / this.dpr;
-    const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, sel: f.id === UI.sel }; })
+    const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, ring: f.faith ? (G.faiths.get(f.faith) || {}).color : '', sel: f.id === UI.sel }; })
       .concat(G.camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })));
     ctx.font = `700 ${kc > 20 ? 12 : 10.5}px Figtree, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const it of items) {
@@ -2198,6 +2297,7 @@ class Renderer {
       ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(sx - w / 2, sy - 9, w, 18, 9); else ctx.rect(sx - w / 2, sy - 9, w, 18); ctx.fill();
       if (it.sel) { ctx.strokeStyle = it.dot; ctx.lineWidth = 1.5; ctx.stroke(); }
       ctx.fillStyle = it.dot; ctx.beginPath(); ctx.arc(sx - w / 2 + 9, sy, 3.5, 0, 7); ctx.fill();
+      if (it.ring) { ctx.strokeStyle = it.ring; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx - w / 2 + 9, sy, 5.6, 0, 7); ctx.stroke(); }
       ctx.fillStyle = it.col; ctx.fillText(it.text, sx + 5, sy + 0.5);
     }
     ctx.textBaseline = 'alphabetic';
@@ -2454,7 +2554,7 @@ class Interface {
       const why = (f.moodWhy || []).join(', ');
       const rels = G.alive().filter(o => o !== f).map(o => `${STANCE[G.dip.stanceOf(f, o)].toLowerCase()} with ${o.name}`).join('; ');
       const reign = Math.floor(f.ruler.years);
-      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}`;
+      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
       for (const k of Object.keys(JOBS)) {
         const n = f.people.filter(o => o.job === k).length;
         $('n-' + k).textContent = n;
@@ -2477,6 +2577,11 @@ class Interface {
         rows.push(`<div class="rel"><span class="who"><i style="background:${a.color}"></i>${a.name} · <i style="background:${b.color}"></i>${b.name}</span><span class="relbar"><i style="left:${left}%;width:${width}%;background:${col}"></i></span><span class="chip ${st === 'war' ? 'war' : st === 'ally' ? 'ally' : 'peace'}">${STANCE[st]}${G.dip.isOpen(a, b) && st !== 'war' ? ' · open' : ''}</span></div>`);
       }
       this.setHtml('rels', rows.length ? rows.join('') : '<div class="steward">Only one settlement stands. Relations begin when a second one is founded.</div>');
+      const faiths = G.faiths.list.filter(x => !x.gone).map(x => {
+        const ms = fs.filter(o => o.faith === x.id), h = G.F(x.holy);
+        return { x, ms, pop: ms.reduce((n, o) => n + o.pop, 0), h };
+      }).filter(r => r.ms.length).sort((p, q) => q.pop - p.pop);
+      this.setHtml('faiths', faiths.length ? faiths.map(r => `<div class="faith"><span class="who"><i style="background:${r.x.color}"></i>${r.x.name}</span><span class="tp">${r.pop} faithful in ${r.ms.length} realm${r.ms.length > 1 ? 's' : ''}${r.h ? ` · holy city ${r.h.name}` : ''}</span></div>`).join('') : '<div class="steward">No faith yet. The first realm to build a chapel will found one.</div>');
       if (G.chron.dirty) {
         const ul = $('pollog'); ul.textContent = '';
         for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border/.test(e.text)).slice(0, 12)) {
