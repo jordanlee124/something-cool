@@ -77,6 +77,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .store .n { font-size: 0.68rem; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .store.low .v, .store.low .n { color: var(--bad); }
 
+.meter { align-self: flex-start; margin-top: -4px; font: 600 0.72rem/1 Figtree, system-ui, sans-serif; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 9px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.meter b { color: var(--fps, #3f8f2f); }
+.meter.off span { display: none; }
 .mapbox { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: #6da35a; }
 canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointer; }
 .info { font-size: 0.85rem; color: var(--muted); min-height: 1.3em; padding: 0 2px; }
@@ -211,6 +214,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="banner" id="banner" hidden><small id="bansmall">A new age</small><strong id="banbig"></strong></div>
     <div class="card" id="card" role="status" hidden><i id="cardbar"></i><small id="cardk"></small><strong id="cardt"></strong><p id="cardx"></p></div>
   </div>
+  <button class="meter" id="meter" type="button" aria-label="Frame rate meter. Tap to hide or show the details.">– fps</button>
   <div class="info" id="info">Every settlement runs itself. Tap the map to inspect a person, building or tile.</div>
 
   <div class="drawer">
@@ -393,13 +397,57 @@ class World {
     return sides;
   }
   ensure(x0, y0, x1, y1) { return this.growTo(Math.floor(x0 / CS), Math.floor(y0 / CS), Math.floor(x1 / CS), Math.floor(y1 / CS)); }
-  // breadth-first search inside a box around the trip, widened once if the trip has to go around a lake
-  findPath(sx, sy, tx, ty) {
+  // breadth-first search inside a box around the trip, widened once if the trip has to go around a lake.
+  // With a realm f, other realms' land is closed unless f holds an open-borders treaty with them.
+  // Someone already standing on closed land (the border moved under them) may walk out through it.
+  findPath(sx, sy, tx, ty, f) {
     sx = clamp(Math.round(sx), this.x0, this.x1 - 1); sy = clamp(Math.round(sy), this.y0, this.y1 - 1);
     if (sx === tx && sy === ty) return [];
-    return this.searchBox(sx, sy, tx, ty, 10) || this.searchBox(sx, sy, tx, ty, 40);
+    let pass = null;
+    if (f) {
+      pass = G.dip.passFor(f);
+      const own = this.tile(sx, sy).own;
+      if (own && !pass[own]) pass = Object.assign({}, pass, { [own]: true });
+    }
+    // workers walk the same trips over and over, so remember routes until borders, treaties or the map change
+    if (!this.fresh(this._pathStamp) || this._paths.size > 4000) { this._paths = new Map(); this._pathStamp = this.stampNow(false); }
+    const n = this.w * this.h, id = ((f ? f.id : 0) * n + this.idx(sx, sy)) * n + this.idx(tx, ty);
+    let p = this._paths.get(id);
+    if (p === undefined) { p = this.searchBox(sx, sy, tx, ty, 10, pass) || this.searchBox(sx, sy, tx, ty, 40, pass); this._paths.set(id, p); }
+    return p && p.slice();
   }
-  searchBox(sx, sy, tx, ty, m) {
+  // caches below stay valid until borders, treaties or the map change (and, for reachability, the day)
+  stampNow(daily) { return { day: daily ? G.day : 0, ver: G.dip.ver, x0: this.x0, y0: this.y0, w: this.w, h: this.h }; }
+  fresh(s, daily) { return !!s && s.ver === G.dip.ver && s.w === this.w && s.h === this.h && s.x0 === this.x0 && s.y0 === this.y0 && (!daily || s.day === G.day); }
+  // every tile realm f can walk to from its town centre, refreshed daily or when borders/treaties/the map change.
+  // Workers only pick targets inside it, so they don't keep searching for paths that borders block.
+  reachable(f) {
+    const tc = f.tc;
+    if (!tc) return null;
+    this._reach = this._reach || {};
+    const c = this._reach[f.id];
+    if (c && this.fresh(c.stamp, true)) return c.r;
+    const stamp = this.stampNow(true);
+    const pass = G.dip.passFor(f), n = this.w * this.h, r = new Uint8Array(n), q = new Int32Array(n);
+    let qa = 0, qb = 0;
+    const s = this.idx(tc.x, tc.y); r[s] = 1; q[qb++] = s;
+    while (qa < qb) {
+      const cur = q[qa++], x = cur % this.w, y = (cur / this.w) | 0;
+      for (const [dx, dy] of N4) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= this.w || ny >= this.h) continue;
+        const i = ny * this.w + nx;
+        if (r[i]) continue;
+        const T = this.tiles[i];
+        if (T.own && T.own !== f.id && !pass[T.own]) continue;
+        r[i] = 1;
+        if (T.t !== 3) q[qb++] = i;
+      }
+    }
+    this._reach[f.id] = { stamp, r };
+    return r;
+  }
+  searchBox(sx, sy, tx, ty, m, pass) {
     const bx0 = Math.max(this.x0, Math.min(sx, tx) - m), by0 = Math.max(this.y0, Math.min(sy, ty) - m);
     const bx1 = Math.min(this.x1 - 1, Math.max(sx, tx) + m), by1 = Math.min(this.y1 - 1, Math.max(sy, ty) + m);
     const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
@@ -414,7 +462,10 @@ class World {
         const nx = x + dx, ny = y + dy;
         if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
         const n = ny * bw + nx;
-        if (prev[n] !== -1 || (n !== goal && this.tiles[(ny + by0 - this.y0) * this.w + (nx + bx0 - this.x0)].t === 3)) continue;
+        if (prev[n] !== -1) continue;
+        const T = this.tiles[(ny + by0 - this.y0) * this.w + (nx + bx0 - this.x0)];
+        if (pass && T.own && !pass[T.own]) continue;
+        if (n !== goal && T.t === 3) continue;
         prev[n] = cur; q.push(n);
       }
     }
@@ -521,11 +572,16 @@ class Colonist {
     if (this.tid) cl.byTid.set(this.tid, (cl.byTid.get(this.tid) || 0) + n);
     if (this.tx !== null) { const i = W.idx(this.tx, this.ty); cl.byTile.set(i, (cl.byTile.get(i) || 0) + n); }
   }
+  // can our realm walk to this tile right now? (borders may have swallowed a farm or a storehouse)
+  reach(x, y) { const W = G.world, R = W.reachable(this.home); return !R || (W.inside(x, y) && R[W.idx(x, y)] === 1); }
   findTarget() {
     const f = this.home, cl = this.claims();
     if (this.job === 'farmer') {
       const winter = G.season === 3;
-      const ok = f.buildings.filter(b => b.built && (b.type === 'dock' || b.type === 'farm') && cl.tid(b.id) < BUILD[b.type].slots);
+      // keep working our own field if it still has room: most farmer decisions end here
+      const cur = !winter && this.tid ? G.byId(this.tid) : null;
+      if (cur && cur.built && cur.f === f.id && (cur.type === 'farm' || cur.type === 'dock') && cl.tid(cur.id) < BUILD[cur.type].slots && this.reach(cur.x, cur.y)) return cur;
+      const ok = f.buildings.filter(b => b.built && (b.type === 'dock' || b.type === 'farm') && cl.tid(b.id) < BUILD[b.type].slots && this.reach(b.x, b.y));
       if (!ok.length) return null;
       const mine = ok.find(b => b.id === this.tid);
       if (mine && !(winter && mine.type === 'farm' && ok.some(b => b.type === 'dock'))) return mine;
@@ -533,23 +589,25 @@ class Colonist {
       return ok[0];
     }
     if (this.job === 'builder') {
-      const sites = f.buildings.filter(b => !b.built);
+      const sites = f.buildings.filter(b => !b.built && this.reach(b.x, b.y));
       if (!sites.length) return null;
       sites.sort((a, b) => (cl.tid(a.id) - cl.tid(b.id)) * 3 + dist(this, a.x, a.y) - dist(this, b.x, b.y));
       return sites[0];
     }
     if (this.job === 'woodcutter' || this.job === 'miner') {
-      const want = this.job === 'woodcutter' ? 1 : 2, ds = f.drops, W = G.world;
+      const want = this.job === 'woodcutter' ? 1 : 2, ds = f.drops, W = G.world, R = W.reachable(f);
       const scan = r => {
         let best = null, bd = 1e9;
         const cx = Math.round(this.x), cy = Math.round(this.y);
         for (let y = Math.max(W.y0, cy - r); y <= Math.min(W.y1 - 1, cy + r); y++) for (let x = Math.max(W.x0, cx - r); x <= Math.min(W.x1 - 1, cx + r); x++) {
           const T = W.tile(x, y);
-          if (T.t !== want || T.amt <= 0 || (T.own && T.own !== f.id) || T.c) continue;
+          if (T.t !== want || T.amt <= 0 || (T.own && T.own !== f.id) || T.c || (R && !R[W.idx(x, y)])) continue;
           const taken = cl.tile(x, y);
           if (taken >= 2) continue;
+          const d0 = dist(this, x, y) * 0.5 + taken * 3;
+          if (d0 >= bd) continue;
           let hd = 1e9; for (const b of ds) hd = Math.min(hd, Math.abs(b.x - x) + Math.abs(b.y - y));
-          const d = dist(this, x, y) * 0.5 + (hd < 1e9 ? hd : 0) + taken * 3;
+          const d = d0 + (hd < 1e9 ? hd : 0);
           if (d < bd) { bd = d; best = { x, y, id: 0 }; }
         }
         return best;
@@ -559,8 +617,9 @@ class Colonist {
     return null;
   }
   goStore() {
-    const d = this.home.nearestDrop(Math.round(this.x), Math.round(this.y));
-    const p = d ? G.world.findPath(this.x, this.y, d.x, d.y) : null;
+    const W = G.world, R = W.reachable(this.home);
+    const d = this.home.nearestDrop(Math.round(this.x), Math.round(this.y), R && (b => W.inside(b.x, b.y) && R[W.idx(b.x, b.y)] === 1));
+    const p = d ? G.world.findPath(this.x, this.y, d.x, d.y, this.home) : null;
     if (!p) { this.carry = null; this.st = 'idle'; this.wait = 1; return; }
     this.st = 'goStore'; this.path = p;
     if (!p.length) this.arrive();
@@ -571,13 +630,13 @@ class Colonist {
     if (!tg) {
       const t = this.home.tc || { x: Math.round(this.x), y: Math.round(this.y) };
       const x = clamp(t.x + ri(-3, 3), W.x0, W.x1 - 1), y = clamp(t.y + ri(-3, 3), W.y0, W.y1 - 1);
-      const p = W.tile(x, y).t !== 3 ? W.findPath(this.x, this.y, x, y) : null;
+      const p = W.tile(x, y).t !== 3 && this.reach(x, y) ? W.findPath(this.x, this.y, x, y, this.home) : null;
       this.tid = 0; this.tx = null; this.ty = null;
       if (p && p.length) { this.st = 'wander'; this.path = p; } else { this.st = 'idle'; this.wait = 1 + rnd() * 2; }
       return;
     }
     this.tid = tg.id; this.tx = tg.x; this.ty = tg.y;
-    const p = W.findPath(this.x, this.y, tg.x, tg.y);
+    const p = W.findPath(this.x, this.y, tg.x, tg.y, this.home);
     if (p === null) { this.st = 'idle'; this.wait = 2; return; }
     this.st = 'goWork'; this.path = p;
     const cl = this.home._claims && this.home._claims[this.job];
@@ -626,6 +685,13 @@ class Colonist {
       }
     } else quit();
   }
+  // a border closed ahead of us since the trip was planned: turn back and plan again from here
+  barred(here, next) {
+    const N = G.world.tile(next.x, next.y);
+    if (!N || !N.own || N.own === this.f) return false;
+    const pass = G.dip.passFor(this.home);
+    return !pass[N.own] && !(here && here.own && here.own !== this.f && !pass[here.own]);
+  }
   update(dt) {
     if (this.path.length) {
       let move = SPEED * (this.home.age >= 3 ? 1.15 : 1) * dt;
@@ -635,6 +701,7 @@ class Colonist {
           this.x = n.x; this.y = n.y; this.path.shift(); move -= d;
           const T = G.world.tile(n.x, n.y);
           if (T && T.foot < 400) { T.foot += 1; if (T.foot === 13 || T.foot === 61 || T.foot === 161) G.world.touch(n.x, n.y); }
+          if (this.path.length && this.barred(T, this.path[0])) { this.path = []; this.st = 'idle'; this.wait = 0.5; return; }
         } else { this.x += dx / d * move; this.y += dy / d * move; move = 0; }
       }
       if (!this.path.length) this.arrive();
@@ -845,10 +912,13 @@ class Settlement {
   get housing() { return this.buildings.reduce((n, b) => n + b.houses, 0); }
   get futureHousing() { return this.buildings.reduce((n, b) => n + (BUILD[b.type].house || 0), 0); }
   get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age; }
-  get drops() { return this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store')); }
-  nearestDrop(x, y) {
+  get drops() {
+    if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store')); }
+    return this._drops;
+  }
+  nearestDrop(x, y, ok) {
     let best = null, bd = 1e9;
-    for (const b of this.drops) { const d = Math.abs(b.x - x) + Math.abs(b.y - y); if (d < bd) { bd = d; best = b; } }
+    for (const b of this.drops) { if (ok && !ok(b)) continue; const d = Math.abs(b.x - x) + Math.abs(b.y - y); if (d < bd) { bd = d; best = b; } }
     return best;
   }
   get military() { return this.buildings.reduce((n, b) => n + (b.built ? BUILD[b.type].def || 0 : 0), 0) + Math.floor(this.pop / 6); }
@@ -1029,7 +1099,7 @@ class Settlement {
     for (const o of G.alive()) if (o !== this && o !== n) { const r = dip.relOf(this, o) * 0.5; dip.rel[key(o.id, n.id)] = r; dip.stance[key(o.id, n.id)] = r >= 40 ? 'ally' : r <= -40 ? 'war' : 'neutral'; }
     for (const c of shuffle(crew.slice()).slice(0, size)) {
       c.f = n.id; c.st = 'exodus'; c.carry = null; c.tid = 0; c.tx = null; c.ty = null; c.job = pick(['farmer', 'woodcutter', 'builder']);
-      c.path = G.world.findPath(c.x, c.y, site.x, site.y) || [];
+      c.path = G.world.findPath(c.x, c.y, site.x, site.y, n) || [];
     }
     G.dirtyC();
     if (!n.buildings.some(b => b.type === 'farm')) { const sp = { x: site.x + 1, y: site.y + 1 }; const T = G.world.tile(sp.x, sp.y); if (T && !T.b && T.t !== 3) { T.t = 0; T.amt = 0; G.addBuilding(n, 'farm', sp.x, sp.y, true); } }
@@ -1206,7 +1276,35 @@ class Camp {
 
 // ========== relations between settlements ==========
 class Diplomacy {
-  constructor(d) { d = d || {}; this.rel = d.rel || {}; this.stance = d.stance || {}; this.war = d.war || {}; this.contact = d.contact || {}; this.broke = d.broke || {}; }
+  constructor(d) { d = d || {}; this.rel = d.rel || {}; this.stance = d.stance || {}; this.war = d.war || {}; this.contact = d.contact || {}; this.broke = d.broke || {}; this.open = d.open || {}; this._pass = null; this.ver = 0; }
+  isOpen(a, b) { return !!this.open[key(a.id, b.id)]; }
+  // owner ids whose land realm f may walk through: its own, allies, and anyone it has an open-borders treaty with (never during war)
+  passFor(f) {
+    if (!this._pass || this._pass.tick !== G.tick) this._pass = { tick: G.tick };
+    let p = this._pass[f.id];
+    if (!p) {
+      p = this._pass[f.id] = { [f.id]: true };
+      for (const k in this.open) {
+        if (this.stance[k] === 'war') continue;
+        const [a, b] = k.split('-').map(Number);
+        if (a === f.id) p[b] = true; else if (b === f.id) p[a] = true;
+      }
+    }
+    return p;
+  }
+  openBorders(a, b, why) {
+    const k = key(a.id, b.id);
+    if (this.open[k]) return;
+    this.open[k] = G.day; this._pass = null; this.ver++;
+    G.chron.note(why || `${a.name} and ${b.name} signed an open-borders treaty. Their people may now cross each other's land.`, 'pol');
+    if (!why) G.chron.record(`${a.name} and ${b.name} opened their borders to each other.`, 'good', a);
+  }
+  closeBorders(a, b, why) {
+    const k = key(a.id, b.id);
+    if (!this.open[k]) return;
+    delete this.open[k]; this._pass = null; this.ver++;
+    G.chron.note(why || `${a.name} closed its borders to ${b.name}.`, 'pol');
+  }
   relOf(a, b) { return this.rel[key(a.id, b.id)] || 0; }
   stanceOf(a, b) { return this.stance[key(a.id, b.id)] || 'neutral'; }
   meet(f) { for (const o of G.alive()) if (o !== f) { this.rel[key(f.id, o.id)] = 0; this.stance[key(f.id, o.id)] = 'neutral'; } }
@@ -1216,6 +1314,7 @@ class Diplomacy {
     this.stance[k] = st;
     if (st === 'war') {
       this.war[k] = 0;
+      if (this.open[k]) { delete this.open[k]; this._pass = null; this.ver++; }
       const proud = f => f.ruler.trait === 'proud' || f.ruler.trait === 'cruel' ? 30 : 0;
       const [ag, df] = a.military + proud(a) >= b.military + proud(b) ? [a, b] : [b, a];
       C.note(`${a.name} and ${b.name} are at war.`, 'bad');
@@ -1229,6 +1328,7 @@ class Diplomacy {
     } else if (st === 'ally') {
       C.note(`${a.name} and ${b.name} formed an alliance.`, 'good'); View.toast(`${a.name} and ${b.name} are now allies`, 'good');
       C.record(`${a.name} and ${b.name} swore an alliance.`, 'good', a);
+      this.openBorders(a, b, `As allies, ${a.name} and ${b.name} opened their borders to each other.`);
     } else if (old === 'war') {
       const days = this.war[k] || 0;
       C.note(`${a.name} and ${b.name} made peace.`, 'good'); View.toast(`Peace between ${a.name} and ${b.name}`, 'good');
@@ -1269,6 +1369,10 @@ class Diplomacy {
       else if (st === 'ally' && r < 30) this.set(a, b, 'neutral');
       else if (st === 'neutral' && r <= -40) this.set(a, b, 'war');
       else if (st === 'war' && r >= -15) this.set(a, b, 'neutral');
+      if (this.stance[k] !== 'war') {
+        if (!this.open[k] && contact && r >= 25 && rnd() < 0.03) this.openBorders(a, b);
+        else if (this.open[k] && this.stance[k] !== 'ally' && r < 5) { const [x, y] = rnd() < 0.5 ? [a, b] : [b, a]; this.closeBorders(a, b, `${x.name} closed its borders and turned back travellers from ${y.name}.`); }
+      }
       if (this.stance[k] === 'war' && rnd() < 0.12) {
         const ma = a.military + 1, mb = b.military + 1;
         if (rnd() < ma / (ma + mb)) this.raid(a, b); else this.raid(b, a);
@@ -1288,6 +1392,8 @@ class Diplomacy {
     const opts = [
       { w: 1, ok: st !== 'war', d: 20, t: `A royal marriage joined the ruling houses of ${a.name} and ${b.name}.` },
       { w: 2, ok: st !== 'war', d: 12, t: `${a.name} and ${b.name} signed a trade pact.` },
+      { w: 2, ok: st !== 'war' && !this.open[k] && contact > 0 && r > 5, d: 6, open: true },
+      { w: 2, ok: st === 'neutral' && !!this.open[k] && contact > 0, d: -10, close: true, t: `Smugglers from ${b.name} were caught on the roads of ${a.name}. ${a.name} shut its border.` },
       { w: 4, ok: contact > 0, d: -18, t: `${a.name} and ${b.name} quarrel over where the border runs.` },
       { w: 3, ok: true, d: -12, t: `An envoy from ${a.name} insulted the court of ${b.name}.` },
       { w: 1, ok: true, d: -28, t: `An envoy from ${b.name} was murdered on the road to ${a.name}.` },
@@ -1301,6 +1407,8 @@ class Diplomacy {
     let rr = rnd() * opts.reduce((n, o) => n + o.w, 0), o = opts[0];
     for (const x of opts) if ((rr -= x.w) <= 0) { o = x; break; }
     if (!o) return;
+    if (o.open) { this.openBorders(a, b); this.rel[k] = clamp(r + o.d, -100, 100); return; }
+    if (o.close) { this.closeBorders(a, b, o.t); this.rel[k] = clamp(r + o.d, -100, 100); return; }
     G.chron.note(o.t, 'pol');
     if (o.peace) { this.rel[k] = -10; this.set(a, b, 'neutral'); return; }
     this.rel[k] = clamp(r + o.d, -100, 100);
@@ -1525,6 +1633,11 @@ class Game {
         if (sc > best[i]) { best[i] = sc; W.tiles[i].own = f.id; }
       }
     }
+    // a realm always holds the ground around its own town centre, however strong its neighbours are
+    for (const f of this.alive()) {
+      const tc = f.tc; if (!tc) continue;
+      for (let y = tc.y - 2; y <= tc.y + 2; y++) for (let x = tc.x - 2; x <= tc.x + 2; x++) { const T = W.tile(x, y); if (T) T.own = f.id; }
+    }
     const contact = {};
     for (let y = W.y0; y < W.y1; y++) for (let x = W.x0; x < W.x1; x++) {
       const T = W.tile(x, y);
@@ -1534,7 +1647,7 @@ class Game {
         if (N && N.own && N.own !== T.own) { const k = key(T.own, N.own); contact[k] = (contact[k] || 0) + 1; }
       }
     }
-    this.dip.contact = contact;
+    this.dip.contact = contact; this.dip.ver++;
     W.touchAll();
   }
   // keep a margin of wild land around every realm and camp; the map grows to make room
@@ -1708,8 +1821,8 @@ function tri(g, x1, y1, x2, y2, x3, y3) { g.beginPath(); g.moveTo(x1, y1); g.lin
 class ChunkCache {
   constructor() { this.map = new Map(); this.pixels = 0; this.budget = 10e6; }
   clear() { this.map.clear(); this.pixels = 0; }
-  markAll() { for (const e of this.map.values()) e.dirty = true; }
-  mark(k) { const e = this.map.get(k); if (e) e.dirty = true; }
+  markAll() { for (const e of this.map.values()) e.dirty = 3; }   // 3: the season changed
+  mark(k) { const e = this.map.get(k); if (e && !e.dirty) e.dirty = 1; }   // 1: a tree felled or a path worn
   get(k) { return this.map.get(k); }
   put(k, e) {
     const old = this.map.get(k);
@@ -1729,15 +1842,15 @@ class Renderer {
   constructor(canvas) {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
     this.cssW = 360; this.dpr = 1; this.cam = null; this.lastTerr = 0;
-    this.cache = new ChunkCache(); this.floaters = []; this.walkers = {};
+    this.cache = new ChunkCache(); this.floaters = []; this.walkers = {}; this.sprites = new Map(); this.sres = 16;
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.flakes = Array.from({ length: 60 }, () => ({ x: rnd(), y: rnd(), v: 0.02 + rnd() * 0.03, s: 0.5 + rnd() }));
     this.season = -1;
   }
-  reset() { this.cache.clear(); this.floaters = []; this.walkers = {}; this.cam = null; }
+  reset() { this.cache.clear(); this.sprites.clear(); this.floaters = []; this.walkers = {}; this.cam = null; }
   resize() {
     this.cssW = this.cv.parentElement.clientWidth || 360;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);   // 3× screens gain little sharpness for 2.25× the pixels
     this.cv.width = Math.round(this.cssW * this.dpr); this.cv.height = Math.round(this.cssW * VIEW_H / VIEW_W * this.dpr);
     this.cv.style.height = (this.cssW * VIEW_H / VIEW_W) + 'px';
   }
@@ -1784,7 +1897,7 @@ class Renderer {
       g.fillStyle = se === 3 ? '#2b5a42' : '#3d7f3a'; g.beginPath(); g.arc(x + 0.5, y + 0.55, 0.08, 0, 7); g.fill();
     }
   }
-  renderChunk(cx, cy, res) {
+  renderChunk(cx, cy, res, bake) {
     const W = G.world, se = G.season, px = CS * res;
     const e = this.cache.get(cx + ',' + cy);
     const cv = e && e.cv.width === px ? e.cv : document.createElement('canvas');
@@ -1813,7 +1926,24 @@ class Renderer {
         g.stroke();
       }
     }
-    this.cache.put(cx + ',' + cy, { cv, res, dirty: false, used: performance.now() });
+    // finished buildings are painted into the chunk, so a big town costs a few image draws a frame, not thousands
+    if (bake) for (const b of bake.list) this.paintBuilding(g, b, b.x, b.y);
+    this.cache.put(cx + ',' + cy, { cv, res, dirty: 0, used: performance.now(), at: performance.now(), sig: bake ? bake.sig : 0 });
+  }
+  // finished buildings grouped by every chunk their picture overlaps, with a fingerprint that changes when any of them looks different
+  bakes() {
+    const out = new Map(), wint = G.season === 3 ? 1 : 0;
+    const bs = G.buildings.filter(b => b.built).sort((p, q) => p.y - q.y);
+    for (const b of bs) {
+      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (f && f.age >= 3 ? 1 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
+      for (let cy = Math.floor((b.y - 0.6) / CS); cy <= Math.floor((b.y + 1.4) / CS); cy++) for (let cx = Math.floor((b.x - 0.2) / CS); cx <= Math.floor((b.x + 1.2) / CS); cx++) {
+        const id = cx + ',' + cy;
+        let e = out.get(id);
+        if (!e) out.set(id, e = { list: [], sig: 0 });
+        e.list.push(b); e.sig = (Math.imul(e.sig, 31) + look) | 0;
+      }
+    }
+    return out;
   }
   drawTerrain(now, k) {
     const W = G.world, cam = this.cam, ctx = this.ctx;
@@ -1822,24 +1952,53 @@ class Renderer {
     W.dirty.clear();
     let res = 4; while (res < k && res < 48) res *= 2;
     res = Math.min(res, 48);
-    const throttle = now - this.lastTerr > 400;
-    let budget = 3;
+    const bakes = this.bakes(), none = { list: [], sig: 0 };
     const cx0 = Math.floor(Math.max(W.x0, cam.x) / CS), cy0 = Math.floor(Math.max(W.y0, cam.y) / CS);
     const cx1 = Math.floor((Math.min(W.x1, cam.x + cam.w) - 0.001) / CS), cy1 = Math.floor((Math.min(W.y1, cam.y + cam.h) - 0.001) / CS);
+    // repaint stale chunks for up to ~3 ms a frame, most important first: a new season or new buildings,
+    // then a new zoom level, then (at most every 2 s per chunk) felled trees and worn paths
+    const stale = [];
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+      const id = cx + ',' + cy, bk = bakes.get(id) || none, e = this.cache.get(id);
+      if (!e) { this.renderChunk(cx, cy, res, bk); continue; }
+      const pri = e.dirty === 3 || e.sig !== bk.sig ? 3 : e.res !== res ? 2 : e.dirty && now - e.at > 2000 ? 1 : 0;
+      if (pri) stale.push({ cx, cy, bk, pri });
+    }
+    stale.sort((a, b) => b.pri - a.pri);
+    const t0 = performance.now();
+    for (const s of stale) { if (performance.now() - t0 > 3) break; this.renderChunk(s.cx, s.cy, res, s.bk); }
     const over = 1 / k;   // a pixel of overlap hides seams between chunks
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
-      let e = this.cache.get(cx + ',' + cy);
-      if (!e) { this.renderChunk(cx, cy, res); e = this.cache.get(cx + ',' + cy); }
-      else if ((e.dirty || e.res !== res) && throttle && budget > 0) { budget--; this.renderChunk(cx, cy, res); e = this.cache.get(cx + ',' + cy); }
+      const e = this.cache.get(cx + ',' + cy);
       e.used = now;
       ctx.drawImage(e.cv, cx * CS, cy * CS, CS + over, CS + over);
     }
-    if (budget < 3) this.lastTerr = now;
   }
 
   // ---------- buildings, camps and people ----------
+  // each look of a building (type, stage, winter, owner colour) is painted once per zoom level and then stamped
   drawBuilding(g, b) {
-    const x = b.x, y = b.y, se = G.season, w3 = se === 3, f = G.F(b.f);
+    const f = G.F(b.f), type = !b.built && b.from ? b.from : b.type, res = this.sres;
+    const id = `${type}|${b.built ? 1 : b.from ? 2 : 0}|${G.season === 3 ? 1 : 0}|${f ? f.color + (f.age >= 3 ? 1 : 0) : ''}|${res}`;
+    let s = this.sprites.get(id);
+    if (!s) {
+      if (this.sprites.size > 600) this.sprites.clear();
+      s = document.createElement('canvas'); s.width = Math.ceil(1.4 * res); s.height = Math.ceil(2 * res);
+      const sg = s.getContext('2d'); sg.setTransform(res, 0, 0, res, 0.2 * res, 0.6 * res);
+      this.paintBuilding(sg, b, 0, 0);
+      this.sprites.set(id, s);
+    }
+    g.drawImage(s, b.x - 0.2, b.y - 0.6, 1.4, 2);
+    if (!b.built) {
+      const x = b.x, y = b.y, p = Math.min(1, b.prog / BUILD[b.type].time);
+      g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 0.05; g.setLineDash([0.12, 0.08]);
+      g.strokeRect(x + 0.06, y + 0.06, 0.88, 0.88); g.setLineDash([]);
+      g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(x + 0.12, y + 0.8, 0.76, 0.1);
+      g.fillStyle = '#f0c75a'; g.fillRect(x + 0.12, y + 0.8, 0.76 * p, 0.1);
+    }
+  }
+  paintBuilding(g, b, x, y) {
+    const se = G.season, w3 = se === 3, f = G.F(b.f);
     const type = !b.built && b.from ? b.from : b.type;
     g.save();
     if (!b.built && !b.from) g.globalAlpha = 0.45;
@@ -1940,13 +2099,6 @@ class Renderer {
       g.fillStyle = '#e0b33a'; g.beginPath(); g.arc(x + 0.5, y - 0.22, 0.05, 0, 7); g.fill();
     }
     g.restore();
-    if (!b.built) {
-      const p = Math.min(1, b.prog / BUILD[b.type].time);
-      g.strokeStyle = 'rgba(255,255,255,.85)'; g.lineWidth = 0.05; g.setLineDash([0.12, 0.08]);
-      g.strokeRect(x + 0.06, y + 0.06, 0.88, 0.88); g.setLineDash([]);
-      g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(x + 0.12, y + 0.8, 0.76, 0.1);
-      g.fillStyle = '#f0c75a'; g.fillRect(x + 0.12, y + 0.8, 0.76 * p, 0.1);
-    }
   }
   drawWalkers(k, cx, cy, count, fill, ring, r0, rdt) {
     const list = this.walkers[k] || (this.walkers[k] = []), ctx = this.ctx;
@@ -2039,27 +2191,40 @@ class Renderer {
     const cam = this.cam, a = Math.min(1, rdt * 1.5);
     for (const k of ['x', 'y', 'w', 'h']) cam[k] += (tg[k] - cam[k]) * a;
     const k = cv.width / cam.w;
+    let sres = 8; while (sres < k && sres < 64) sres *= 2;
+    this.sres = sres;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#24331f'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.setTransform(k, 0, 0, k, -cam.x * k, -cam.y * k);
     this.drawTerrain(now, k);
     const vx0 = cam.x - 2, vy0 = cam.y - 2, vx1 = cam.x + cam.w + 2, vy1 = cam.y + cam.h + 2;
     const inView = o => o.x >= vx0 && o.x <= vx1 && o.y >= vy0 && o.y <= vy1;
-    const sorted = G.buildings.filter(inView).sort((p, q) => p.y - q.y);
+    const sorted = G.buildings.filter(b => !b.built && inView(b)).sort((p, q) => p.y - q.y);
     for (const b of sorted) this.drawBuilding(ctx, b);
     for (const c of G.camps()) if (inView(c)) this.drawCamp(c, rdt);
-    const rad = Math.max(0.14, 2.4 * dpr / k);
+    const rad = Math.max(0.14, 2.4 * dpr / k), groups = new Map(), loads = [];
+    let picked = null;
     for (const c of G.cols) {
       if (!inView(c)) continue;
       const ox = (((c.id * 37) % 7) - 3) * 0.045, oy = (((c.id * 53) % 5) - 2) * 0.045;
       const bob = c.st === 'work' && !this.reduced ? Math.sin(now / 120 + c.id) * 0.03 : 0;
-      const px = c.x + 0.5 + ox, py = c.y + 0.5 + oy + bob, f = G.F(c.f);
-      ctx.fillStyle = f ? f.color : '#f4f1e6';
-      ctx.strokeStyle = '#1f1a14'; ctx.lineWidth = rad * 0.35;
-      ctx.beginPath(); ctx.arc(px, py, rad, 0, 7); ctx.fill(); ctx.stroke();
-      if (c.carry) { ctx.fillStyle = RES_COLOR[c.carry.r]; ctx.fillRect(px - rad * 0.5, py - rad * 2.3, rad, rad * 0.85); }
-      if (UI.inspect && UI.inspect.c === c.id) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = rad * 0.4; ctx.beginPath(); ctx.arc(px, py, rad * 1.9, 0, 7); ctx.stroke(); }
+      const px = c.x + 0.5 + ox, py = c.y + 0.5 + oy + bob;
+      let gr = groups.get(c.f);
+      if (!gr) groups.set(c.f, gr = []);
+      gr.push(px, py);
+      if (c.carry) loads.push(px, py, RES_COLOR[c.carry.r]);
+      if (UI.inspect && UI.inspect.c === c.id) picked = [px, py];
     }
+    ctx.strokeStyle = '#1f1a14'; ctx.lineWidth = rad * 0.35;
+    for (const [fid, pts] of groups) {
+      const f = G.F(fid);
+      ctx.fillStyle = f ? f.color : '#f4f1e6';
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i += 2) { ctx.moveTo(pts[i] + rad, pts[i + 1]); ctx.arc(pts[i], pts[i + 1], rad, 0, 7); }
+      ctx.fill(); ctx.stroke();
+    }
+    for (let i = 0; i < loads.length; i += 3) { ctx.fillStyle = loads[i + 2]; ctx.fillRect(loads[i] - rad * 0.5, loads[i + 1] - rad * 2.3, rad, rad * 0.85); }
+    if (picked) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = rad * 0.4; ctx.beginPath(); ctx.arc(picked[0], picked[1], rad * 1.9, 0, 7); ctx.stroke(); }
     if (UI.inspect && !UI.inspect.c) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.06; ctx.strokeRect(UI.inspect.x + 0.03, UI.inspect.y + 0.03, 0.94, 0.94); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const kc = k / dpr;
@@ -2291,12 +2456,12 @@ class Interface {
         const a = fs[i], b = fs[j], r = G.dip.relOf(a, b), st = G.dip.stanceOf(a, b);
         const left = r >= 0 ? 50 : 50 + r / 2, width = Math.abs(r) / 2;
         const col = st === 'war' ? 'var(--bad)' : st === 'ally' ? '#3d7fd1' : r >= 0 ? 'var(--good)' : 'var(--accent)';
-        rows.push(`<div class="rel"><span class="who"><i style="background:${a.color}"></i>${a.name} · <i style="background:${b.color}"></i>${b.name}</span><span class="relbar"><i style="left:${left}%;width:${width}%;background:${col}"></i></span><span class="chip ${st === 'war' ? 'war' : st === 'ally' ? 'ally' : 'peace'}">${STANCE[st]}</span></div>`);
+        rows.push(`<div class="rel"><span class="who"><i style="background:${a.color}"></i>${a.name} · <i style="background:${b.color}"></i>${b.name}</span><span class="relbar"><i style="left:${left}%;width:${width}%;background:${col}"></i></span><span class="chip ${st === 'war' ? 'war' : st === 'ally' ? 'ally' : 'peace'}">${STANCE[st]}${G.dip.isOpen(a, b) && st !== 'war' ? ' · open' : ''}</span></div>`);
       }
       this.setHtml('rels', rows.length ? rows.join('') : '<div class="steward">Only one settlement stands. Relations begin when a second one is founded.</div>');
       if (G.chron.dirty) {
         const ul = $('pollog'); ul.textContent = '';
-        for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided/.test(e.text)).slice(0, 12)) {
+        for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border/.test(e.text)).slice(0, 12)) {
           const li = document.createElement('li'); li.className = e.k;
           const sp = document.createElement('span'); sp.textContent = 'Day ' + e.d;
           li.appendChild(sp); li.appendChild(document.createTextNode(e.text)); ul.appendChild(li);
@@ -2348,13 +2513,41 @@ function restart(n) {
   R.reset(); UI.reset(); save(); UI.setSpeed(3); UI.refresh();
 }
 let last = performance.now(), uiAcc = 0;
-function frame(now) {
-  const rdt = Math.min(0.1, (now - last) / 1000); last = now;
-  if (!G.over && G.speed > 0 && $('setup').hidden) {
-    let dt = rdt * G.speed;
-    while (dt > 0) { const d = Math.min(dt, 0.2); G.step(d); dt -= d; if (G.over) break; }
+// frame meter: frames per second, the slowest frame, and how long the simulation and the drawing took per frame
+class Meter {
+  constructor(el) {
+    this.el = el; this.reset(); this.off = false;
+    try { this.off = localStorage.getItem('ember-vale-meter') === 'off'; } catch (e) { }
+    el.addEventListener('click', e => { e.stopPropagation(); this.off = !this.off; try { localStorage.setItem('ember-vale-meter', this.off ? 'off' : 'on'); } catch (er) { } this.show(); });
   }
+  reset() { this.n = 0; this.t = 0; this.worst = 0; this.sim = 0; this.draw = 0; this.ran = 0; }
+  add(gap, sim, draw, ran) {
+    this.n++; this.t += gap; this.worst = Math.max(this.worst, gap); this.sim += sim; this.draw += draw; this.ran += ran;
+    if (this.t >= 1000) { this.last = { fps: Math.round(this.n * 1000 / this.t), worst: Math.round(this.worst), sim: this.sim / this.n, draw: this.draw / this.n, speed: this.ran * 1000 / this.t }; this.reset(); this.show(); }
+  }
+  show() {
+    const p = this.last;
+    this.el.classList.toggle('off', this.off);
+    if (!p) return;
+    this.el.style.setProperty('--fps', p.fps >= 50 ? '#3f8f2f' : p.fps >= 30 ? '#b7791f' : '#c0392b');
+    const slow = G && G.speed > 0 && p.speed < G.speed * 0.9 ? ` · running at ${p.speed.toFixed(1)}×` : '';
+    this.el.innerHTML = `<b>${p.fps} fps</b><span> · slowest ${p.worst} ms · sim ${p.sim.toFixed(1)} · draw ${p.draw.toFixed(1)}${slow}</span>`;
+  }
+}
+const meter = new Meter($('meter'));
+function frame(now) {
+  const gap = now - last, rdt = Math.min(0.1, gap / 1000); last = now;
+  const t0 = performance.now();
+  let ran = 0;
+  if (!G.over && G.speed > 0 && $('setup').hidden) {
+    // never spend more than ~10 ms a frame simulating: on a slow phone the world runs a little slower
+    // instead of each late frame demanding even more catch-up work the next frame
+    let dt = rdt * G.speed;
+    while (dt > 0) { const d = Math.min(dt, 0.2); G.step(d); dt -= d; ran += d; if (G.over || performance.now() - t0 > 10) break; }
+  }
+  const t1 = performance.now();
   R.draw(rdt, now);
+  meter.add(gap, t1 - t0, performance.now() - t1, ran);
   UI.tick(rdt);
   uiAcc += rdt;
   if (uiAcc > 0.3) { uiAcc = 0; UI.refresh(); }
@@ -2379,7 +2572,7 @@ function start(data) {
 window.addEventListener('resize', () => R.resize());
 document.addEventListener('visibilitychange', () => { if (document.hidden && G) save(); });
 window.claude?.hot?.snapshot?.(() => ({ save: JSON.stringify(G) }));
-window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI };
+window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter };
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
 </script>
