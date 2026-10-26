@@ -260,6 +260,8 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="pane" id="pane-pol" hidden>
       <div class="sub">Faiths</div>
       <div class="sites" id="faiths"></div>
+      <div class="sub">Trade roads</div>
+      <div class="sites" id="roads"></div>
       <div class="sub">Relations</div>
       <div class="sites" id="rels"></div>
       <div class="sub">Recent politics</div>
@@ -1583,6 +1585,86 @@ class Faiths {
   toJSON() { return { list: this.list, nid: this.nid }; }
 }
 
+// ---------- trade routes ----------
+// Friendly realms that both have a market open a named road between their town centres. Caravans walk it,
+// and each delivery adds goods to both ends and warms relations. War or a lost market closes the road.
+const ROAD_NAMES = ['Amber', 'Salt', 'Wool', 'Iron', 'Spice', 'Silver', 'Honey', 'Timber', 'Copper', 'Linen', 'Pilgrim', 'Old', 'King\'s', 'Grain', 'Glass', 'Dye'];
+class Trade {
+  constructor(d) { this.routes = ((d && d.routes) || []).map(r => ({ ...r })); this.nid = (d && d.nid) || 1; this.caravans = []; }
+  ok(a, b) {
+    const dip = G.dip, st = dip.stanceOf(a, b), ta = a.tc, tb = b.tc;
+    if (st === 'war' || !ta || !tb || !a.builtCount('market') || !b.builtCount('market')) return false;
+    if (Math.abs(ta.x - tb.x) + Math.abs(ta.y - tb.y) > 90) return false;
+    return st === 'ally' || dip.isOpen(a, b) || dip.relOf(a, b) >= 10;
+  }
+  // the road itself: the walk between town centres through either realm's land, recomputed each season
+  path(r) {
+    const stamp = G.year * 4 + G.season;
+    if (r._p !== undefined && r._s === stamp) return r._p;
+    const a = G.F(r.a), b = G.F(r.b), ta = a && a.tc, tb = b && b.tc;
+    let p = null;
+    if (ta && tb) {
+      const pass = Object.assign({}, G.dip.passFor(a), G.dip.passFor(b));
+      p = G.world.searchBox(ta.x, ta.y, tb.x, tb.y, 30, pass);
+      if (p) p.unshift({ x: ta.x, y: ta.y });
+    }
+    r._p = p; r._s = stamp;
+    return p;
+  }
+  daily() {
+    const fs = G.alive(), C = G.chron;
+    for (const r of this.routes.slice()) {
+      const a = G.F(r.a), b = G.F(r.b);
+      if (a && b && !a.gone && !b.gone && this.ok(a, b) && this.path(r)) continue;
+      this.routes.splice(this.routes.indexOf(r), 1);
+      this.caravans = this.caravans.filter(c => c.r !== r);
+      if (a && b && !a.gone && !b.gone) {
+        const why = G.dip.stanceOf(a, b) === 'war' ? 'War closed' : 'Trade dried up on';
+        C.note(`${why} ${r.name} between ${a.name} and ${b.name}.`, 'pol');
+        if (r.n >= 10) C.record(`${why} ${r.name} between ${a.name} and ${b.name} after ${r.n} caravans.`, '', a);
+      }
+    }
+    for (let i = 0; i < fs.length; i++) for (let j = i + 1; j < fs.length; j++) {
+      const a = fs[i], b = fs[j];
+      if (this.routes.some(r => (r.a === a.id && r.b === b.id) || (r.a === b.id && r.b === a.id))) continue;
+      if (!this.ok(a, b) || rnd() > 0.04) continue;
+      const used = new Set(this.routes.map(r => r.name));
+      const r = { id: this.nid++, a: a.id, b: b.id, name: `the ${pick(ROAD_NAMES.filter(n => !used.has(`the ${n} Road`))) || 'New'} Road`, since: G.day, n: 0 };
+      if (!this.path(r)) continue;
+      this.routes.push(r);
+      C.note(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good');
+      C.record(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good', a);
+      if (Math.max(a.age, b.age) >= 3 && this.routes.length <= 3) C.card('Trade', `${upper(r.name)} opens`, `Caravans will carry goods between ${a.name} and ${b.name}.`, a);
+    }
+    for (const r of this.routes) {
+      const n = this.caravans.filter(c => c.r === r).length;
+      if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5; this.caravans.push({ r, from: back ? r.b : r.a, to: back ? r.a : r.b, back, d: 0 }); }
+    }
+  }
+  step(dt) {
+    for (const c of this.caravans.slice()) {
+      const p = c.r._p;
+      if (!p) { this.caravans.splice(this.caravans.indexOf(c), 1); continue; }
+      c.d += dt * 1.6;
+      if (c.d < p.length - 1) continue;
+      this.caravans.splice(this.caravans.indexOf(c), 1);
+      const from = G.F(c.from), to = G.F(c.to);
+      if (!from || !to || from.gone || to.gone) continue;
+      c.r.n = (c.r.n || 0) + 1;
+      // each delivery creates a little wealth at both ends: the goods the receiver is shortest of
+      for (const f of [to, from]) { const k = ['food', 'wood', 'stone'].sort((x, y) => f.res[x] - f.res[y])[0]; f.addRes(k, 8 + f.age * 2); }
+      G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + 0.5, -100, 100);
+      if (to.tc) View.float(to.tc.x, to.tc.y, '⚖', '#f0d9a0');
+    }
+  }
+  // where a caravan is on its road, in tile coordinates
+  at(c) {
+    const p = c.r._p, d = c.back ? p.length - 1 - c.d : c.d, i = clamp(Math.floor(d), 0, p.length - 1), j = clamp(i + 1, 0, p.length - 1), t = d - i;
+    return { x: p[i].x + (p[j].x - p[i].x) * t, y: p[i].y + (p[j].y - p[i].y) * t };
+  }
+  toJSON() { return { routes: this.routes.map(({ _p, _s, ...r }) => r), nid: this.nid }; }
+}
+
 const Plague = {
   start(f, from) {
     f.plague = ri(9, 15); f.plagueDead = 0;
@@ -1688,7 +1770,7 @@ class Game {
   constructor() {
     this.v = 4; this.day = 1; this.t = 0; this.speed = 3; this.world = null;
     this.buildings = []; this.cols = []; this.factions = []; this.camps_ = [];
-    this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths();
+    this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths(); this.trade = new Trade();
     this.nid = 1; this.evCd = 4; this.records = {}; this.over = false; this.startN = 3;
     this._b = null; this._bid = null; this._c = null; this._f = null; this._own = null;
   }
@@ -1888,6 +1970,7 @@ class Game {
     this.dip.daily();
     Plague.daily();
     this.faiths.daily();
+    this.trade.daily();
     Camp.spawnDaily();
     const total = this.cols.length;
     for (const c of this.camps()) c.daily(total);
@@ -1904,6 +1987,7 @@ class Game {
   step(dt) {
     this.t += dt; this.tick = (this.tick || 0) + 1;
     for (const c of this.cols.slice()) c.update(dt);
+    this.trade.step(dt);
     for (const f of this.alive()) {
       f.aiT += dt;
       if (f.aiT >= 1.5) { f.aiT = 0; f.steward.assignJobs(); f.steward.build(); }
@@ -1923,7 +2007,7 @@ class Game {
   // ---------- saving and loading ----------
   toJSON() {
     return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; g.setup(n); g.history = new History(null, g.world.seed); g.history.capture(); return g; }
   static load(d) {
@@ -1939,7 +2023,7 @@ class Game {
     g.cols = d.cols.map(c => new Colonist(c));
     g.factions = d.factions.map(f => new Settlement(f));
     g.camps_ = d.camps.map(c => new Camp(c));
-    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths);
+    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths); g.trade = new Trade(d.trade);
     g.relink();
     return g;
   }
@@ -2340,6 +2424,30 @@ class Renderer {
     const y = h >= W.h ? W.y0 + (W.h - h) / 2 : clamp(cy - h / 2, W.y0, W.y1 - h);
     return { x, y, w, h };
   }
+  // trade roads as one dashed stroke, caravans as small carts: a handful of draw calls however busy trade gets
+  drawRoads(ctx, k, dpr, inView) {
+    const T = G.trade;
+    if (!T.routes.length) return;
+    ctx.beginPath();
+    for (const r of T.routes) {
+      const p = r._p; if (!p || !p.length) continue;
+      ctx.moveTo(p[0].x + 0.5, p[0].y + 0.5);
+      for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x + 0.5, p[i].y + 0.5);
+    }
+    const lw = Math.max(0.1, 1.6 * dpr / k);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(70,46,22,.6)'; ctx.lineWidth = lw * 2.4; ctx.stroke();
+    ctx.strokeStyle = '#f3dc9c'; ctx.lineWidth = lw; ctx.setLineDash([lw * 2.5, lw * 2]); ctx.stroke(); ctx.setLineDash([]);
+    const s = Math.max(0.32, 4 * dpr / k);
+    for (const c of T.caravans) {
+      if (!c.r._p) continue;
+      const q = T.at(c);
+      if (!inView(q)) continue;
+      const f = G.F(c.from);
+      ctx.fillStyle = '#2a1d12'; ctx.fillRect(q.x + 0.5 - s * 0.6, q.y + 0.5 - s * 0.45, s * 1.2, s * 0.9);
+      ctx.fillStyle = f ? f.color : '#e8d9b0'; ctx.fillRect(q.x + 0.5 - s * 0.45, q.y + 0.5 - s * 0.32, s * 0.9, s * 0.64);
+    }
+  }
   drawLabels() {
     const ctx = this.ctx, cam = this.cam, kc = this.cv.width / cam.w / this.dpr, cw = this.cv.width / this.dpr, chh = this.cv.height / this.dpr;
     const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, ring: f.faith ? (G.faiths.get(f.faith) || {}).color : '', sel: f.id === UI.sel }; })
@@ -2378,6 +2486,7 @@ class Renderer {
     const sorted = G.buildings.filter(b => !b.built && inView(b)).sort((p, q) => p.y - q.y);
     for (const b of sorted) this.drawBuilding(ctx, b);
     for (const c of G.camps()) if (inView(c)) this.drawCamp(c, rdt);
+    this.drawRoads(ctx, k, dpr, inView);
     const rad = Math.max(0.14, 2.4 * dpr / k), groups = new Map(), loads = [];
     let picked = null;
     for (const c of G.cols) {
@@ -2639,10 +2748,11 @@ class Interface {
         const ms = fs.filter(o => o.faith === x.id), h = G.F(x.holy);
         return { x, ms, pop: ms.reduce((n, o) => n + o.pop, 0), h };
       }).filter(r => r.ms.length).sort((p, q) => q.pop - p.pop);
+      this.setHtml('roads', G.trade.routes.length ? G.trade.routes.map(r => { const a = G.F(r.a), b = G.F(r.b); return `<div class="faith"><span class="who"><i style="background:#e8cf8a"></i>${upper(r.name)}</span><span class="tp">${a ? a.name : '?'} ⇄ ${b ? b.name : '?'} · ${r.n || 0} caravan${r.n === 1 ? '' : 's'} so far</span></div>`; }).join('') : '<div class="steward">No roads yet. Two friendly realms with markets will open one.</div>');
       this.setHtml('faiths', faiths.length ? faiths.map(r => `<div class="faith"><span class="who"><i style="background:${r.x.color}"></i>${r.x.name}</span><span class="tp">${r.pop} faithful in ${r.ms.length} realm${r.ms.length > 1 ? 's' : ''}${r.h ? ` · holy city ${r.h.name}` : ''}</span></div>`).join('') : '<div class="steward">No faith yet. The first realm to build a chapel will found one.</div>');
       if (G.chron.dirty) {
         const ul = $('pollog'); ul.textContent = '';
-        for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border/.test(e.text)).slice(0, 12)) {
+        for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border|Road/.test(e.text)).slice(0, 12)) {
           const li = document.createElement('li'); li.className = e.k;
           const sp = document.createElement('span'); sp.textContent = 'Day ' + e.d;
           li.appendChild(sp); li.appendChild(document.createTextNode(e.text)); ul.appendChild(li);
