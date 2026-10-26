@@ -410,22 +410,24 @@ class World {
       if (own && !pass[own]) pass = Object.assign({}, pass, { [own]: true });
     }
     // workers walk the same trips over and over, so remember routes until borders, treaties or the map change
-    const stamp = `${G.dip.ver}|${this.x0},${this.y0},${this.w},${this.h}`;
-    if (this._pathStamp !== stamp || this._paths.size > 4000) { this._paths = new Map(); this._pathStamp = stamp; }
-    const id = `${f ? f.id : 0}:${sx},${sy}>${tx},${ty}`;
+    if (!this.fresh(this._pathStamp) || this._paths.size > 4000) { this._paths = new Map(); this._pathStamp = this.stampNow(false); }
+    const n = this.w * this.h, id = ((f ? f.id : 0) * n + this.idx(sx, sy)) * n + this.idx(tx, ty);
     let p = this._paths.get(id);
     if (p === undefined) { p = this.searchBox(sx, sy, tx, ty, 10, pass) || this.searchBox(sx, sy, tx, ty, 40, pass); this._paths.set(id, p); }
     return p && p.slice();
   }
+  // caches below stay valid until borders, treaties or the map change (and, for reachability, the day)
+  stampNow(daily) { return { day: daily ? G.day : 0, ver: G.dip.ver, x0: this.x0, y0: this.y0, w: this.w, h: this.h }; }
+  fresh(s, daily) { return !!s && s.ver === G.dip.ver && s.w === this.w && s.h === this.h && s.x0 === this.x0 && s.y0 === this.y0 && (!daily || s.day === G.day); }
   // every tile realm f can walk to from its town centre, refreshed daily or when borders/treaties/the map change.
   // Workers only pick targets inside it, so they don't keep searching for paths that borders block.
   reachable(f) {
     const tc = f.tc;
     if (!tc) return null;
-    const stamp = `${G.day}|${G.dip.ver}|${this.x0},${this.y0},${this.w},${this.h}`;
     this._reach = this._reach || {};
     const c = this._reach[f.id];
-    if (c && c.stamp === stamp) return c.r;
+    if (c && this.fresh(c.stamp, true)) return c.r;
+    const stamp = this.stampNow(true);
     const pass = G.dip.passFor(f), n = this.w * this.h, r = new Uint8Array(n), q = new Int32Array(n);
     let qa = 0, qb = 0;
     const s = this.idx(tc.x, tc.y); r[s] = 1; q[qb++] = s;
@@ -615,7 +617,8 @@ class Colonist {
     return null;
   }
   goStore() {
-    const d = this.home.nearestDrop(Math.round(this.x), Math.round(this.y), b => this.reach(b.x, b.y));
+    const W = G.world, R = W.reachable(this.home);
+    const d = this.home.nearestDrop(Math.round(this.x), Math.round(this.y), R && (b => W.inside(b.x, b.y) && R[W.idx(b.x, b.y)] === 1));
     const p = d ? G.world.findPath(this.x, this.y, d.x, d.y, this.home) : null;
     if (!p) { this.carry = null; this.st = 'idle'; this.wait = 1; return; }
     this.st = 'goStore'; this.path = p;
@@ -909,7 +912,10 @@ class Settlement {
   get housing() { return this.buildings.reduce((n, b) => n + b.houses, 0); }
   get futureHousing() { return this.buildings.reduce((n, b) => n + (BUILD[b.type].house || 0), 0); }
   get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age; }
-  get drops() { return this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store')); }
+  get drops() {
+    if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store')); }
+    return this._drops;
+  }
   nearestDrop(x, y, ok) {
     let best = null, bd = 1e9;
     for (const b of this.drops) { if (ok && !ok(b)) continue; const d = Math.abs(b.x - x) + Math.abs(b.y - y); if (d < bd) { bd = d; best = b; } }
@@ -1844,7 +1850,7 @@ class Renderer {
   reset() { this.cache.clear(); this.sprites.clear(); this.floaters = []; this.walkers = {}; this.cam = null; }
   resize() {
     this.cssW = this.cv.parentElement.clientWidth || 360;
-    this.dpr = Math.min(window.devicePixelRatio || 1, 3);
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);   // 3× screens gain little sharpness for 2.25× the pixels
     this.cv.width = Math.round(this.cssW * this.dpr); this.cv.height = Math.round(this.cssW * VIEW_H / VIEW_W * this.dpr);
     this.cv.style.height = (this.cssW * VIEW_H / VIEW_W) + 'px';
   }
@@ -1891,7 +1897,7 @@ class Renderer {
       g.fillStyle = se === 3 ? '#2b5a42' : '#3d7f3a'; g.beginPath(); g.arc(x + 0.5, y + 0.55, 0.08, 0, 7); g.fill();
     }
   }
-  renderChunk(cx, cy, res) {
+  renderChunk(cx, cy, res, bake) {
     const W = G.world, se = G.season, px = CS * res;
     const e = this.cache.get(cx + ',' + cy);
     const cv = e && e.cv.width === px ? e.cv : document.createElement('canvas');
@@ -1920,7 +1926,24 @@ class Renderer {
         g.stroke();
       }
     }
-    this.cache.put(cx + ',' + cy, { cv, res, dirty: false, used: performance.now() });
+    // finished buildings are painted into the chunk, so a big town costs a few image draws a frame, not thousands
+    if (bake) for (const b of bake.list) this.paintBuilding(g, b, b.x, b.y);
+    this.cache.put(cx + ',' + cy, { cv, res, dirty: false, used: performance.now(), sig: bake ? bake.sig : 0 });
+  }
+  // finished buildings grouped by every chunk their picture overlaps, with a fingerprint that changes when any of them looks different
+  bakes() {
+    const out = new Map(), wint = G.season === 3 ? 1 : 0;
+    const bs = G.buildings.filter(b => b.built).sort((p, q) => p.y - q.y);
+    for (const b of bs) {
+      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (f && f.age >= 3 ? 1 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
+      for (let cy = Math.floor((b.y - 0.6) / CS); cy <= Math.floor((b.y + 1.4) / CS); cy++) for (let cx = Math.floor((b.x - 0.2) / CS); cx <= Math.floor((b.x + 1.2) / CS); cx++) {
+        const id = cx + ',' + cy;
+        let e = out.get(id);
+        if (!e) out.set(id, e = { list: [], sig: 0 });
+        e.list.push(b); e.sig = (Math.imul(e.sig, 31) + look) | 0;
+      }
+    }
+    return out;
   }
   drawTerrain(now, k) {
     const W = G.world, cam = this.cam, ctx = this.ctx;
@@ -1929,15 +1952,17 @@ class Renderer {
     W.dirty.clear();
     let res = 4; while (res < k && res < 48) res *= 2;
     res = Math.min(res, 48);
-    const throttle = now - this.lastTerr > 400;
+    const throttle = now - this.lastTerr > 150;
     let budget = 3;
+    const bakes = this.bakes(), none = { list: [], sig: 0 };
     const cx0 = Math.floor(Math.max(W.x0, cam.x) / CS), cy0 = Math.floor(Math.max(W.y0, cam.y) / CS);
     const cx1 = Math.floor((Math.min(W.x1, cam.x + cam.w) - 0.001) / CS), cy1 = Math.floor((Math.min(W.y1, cam.y + cam.h) - 0.001) / CS);
     const over = 1 / k;   // a pixel of overlap hides seams between chunks
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
-      let e = this.cache.get(cx + ',' + cy);
-      if (!e) { this.renderChunk(cx, cy, res); e = this.cache.get(cx + ',' + cy); }
-      else if ((e.dirty || e.res !== res) && throttle && budget > 0) { budget--; this.renderChunk(cx, cy, res); e = this.cache.get(cx + ',' + cy); }
+      const id = cx + ',' + cy, bk = bakes.get(id) || none;
+      let e = this.cache.get(id);
+      if (!e) { this.renderChunk(cx, cy, res, bk); e = this.cache.get(id); }
+      else if ((e.dirty || e.res !== res || e.sig !== bk.sig) && throttle && budget > 0) { budget--; this.renderChunk(cx, cy, res, bk); e = this.cache.get(id); }
       e.used = now;
       ctx.drawImage(e.cv, cx * CS, cy * CS, CS + over, CS + over);
     }
@@ -2168,7 +2193,7 @@ class Renderer {
     this.drawTerrain(now, k);
     const vx0 = cam.x - 2, vy0 = cam.y - 2, vx1 = cam.x + cam.w + 2, vy1 = cam.y + cam.h + 2;
     const inView = o => o.x >= vx0 && o.x <= vx1 && o.y >= vy0 && o.y <= vy1;
-    const sorted = G.buildings.filter(inView).sort((p, q) => p.y - q.y);
+    const sorted = G.buildings.filter(b => !b.built && inView(b)).sort((p, q) => p.y - q.y);
     for (const b of sorted) this.drawBuilding(ctx, b);
     for (const c of G.camps()) if (inView(c)) this.drawCamp(c, rdt);
     const rad = Math.max(0.14, 2.4 * dpr / k), groups = new Map(), loads = [];
@@ -2489,30 +2514,34 @@ class Meter {
     try { this.off = localStorage.getItem('ember-vale-meter') === 'off'; } catch (e) { }
     el.addEventListener('click', e => { e.stopPropagation(); this.off = !this.off; try { localStorage.setItem('ember-vale-meter', this.off ? 'off' : 'on'); } catch (er) { } this.show(); });
   }
-  reset() { this.n = 0; this.t = 0; this.worst = 0; this.sim = 0; this.draw = 0; }
-  add(gap, sim, draw) {
-    this.n++; this.t += gap; this.worst = Math.max(this.worst, gap); this.sim += sim; this.draw += draw;
-    if (this.t >= 1000) { this.last = { fps: Math.round(this.n * 1000 / this.t), worst: Math.round(this.worst), sim: this.sim / this.n, draw: this.draw / this.n }; this.reset(); this.show(); }
+  reset() { this.n = 0; this.t = 0; this.worst = 0; this.sim = 0; this.draw = 0; this.ran = 0; }
+  add(gap, sim, draw, ran) {
+    this.n++; this.t += gap; this.worst = Math.max(this.worst, gap); this.sim += sim; this.draw += draw; this.ran += ran;
+    if (this.t >= 1000) { this.last = { fps: Math.round(this.n * 1000 / this.t), worst: Math.round(this.worst), sim: this.sim / this.n, draw: this.draw / this.n, speed: this.ran * 1000 / this.t }; this.reset(); this.show(); }
   }
   show() {
     const p = this.last;
     this.el.classList.toggle('off', this.off);
     if (!p) return;
     this.el.style.setProperty('--fps', p.fps >= 50 ? '#3f8f2f' : p.fps >= 30 ? '#b7791f' : '#c0392b');
-    this.el.innerHTML = `<b>${p.fps} fps</b><span> · slowest ${p.worst} ms · sim ${p.sim.toFixed(1)} · draw ${p.draw.toFixed(1)}</span>`;
+    const slow = G && G.speed > 0 && p.speed < G.speed * 0.9 ? ` · running at ${p.speed.toFixed(1)}×` : '';
+    this.el.innerHTML = `<b>${p.fps} fps</b><span> · slowest ${p.worst} ms · sim ${p.sim.toFixed(1)} · draw ${p.draw.toFixed(1)}${slow}</span>`;
   }
 }
 const meter = new Meter($('meter'));
 function frame(now) {
   const gap = now - last, rdt = Math.min(0.1, gap / 1000); last = now;
   const t0 = performance.now();
+  let ran = 0;
   if (!G.over && G.speed > 0 && $('setup').hidden) {
+    // never spend more than ~10 ms a frame simulating: on a slow phone the world runs a little slower
+    // instead of each late frame demanding even more catch-up work the next frame
     let dt = rdt * G.speed;
-    while (dt > 0) { const d = Math.min(dt, 0.2); G.step(d); dt -= d; if (G.over) break; }
+    while (dt > 0) { const d = Math.min(dt, 0.2); G.step(d); dt -= d; ran += d; if (G.over || performance.now() - t0 > 10) break; }
   }
   const t1 = performance.now();
   R.draw(rdt, now);
-  meter.add(gap, t1 - t0, performance.now() - t1);
+  meter.add(gap, t1 - t0, performance.now() - t1, ran);
   UI.tick(rdt);
   uiAcc += rdt;
   if (uiAcc > 0.3) { uiAcc = 0; UI.refresh(); }

@@ -19,7 +19,7 @@ What else happens along the way:
 - **Seasons and mood:** farms yield little in winter and every hearth burns wood. Food, housing, cold, losses, landmarks, wars and allies all affect mood.
 - **Controls:** speed buttons (Pause, 1×, 3×, 10×); Realm, Politics and Chronicle tabs; and tap a settlement to follow it.
 
-The line under the map shows frames per second, the slowest recent frame, and how many milliseconds the simulation and the drawing take per frame; tap it to shorten it.
+The line under the map shows frames per second, the slowest recent frame, and how many milliseconds the simulation and the drawing take per frame; If the phone can't keep up, the game slows itself down rather than dropping frames, and the line says what speed it is really running at. Tap it to shorten it.
 
 Progress saves to the browser's local storage. Saves from the earlier fixed-size map are migrated automatically.
 
