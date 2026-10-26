@@ -1821,8 +1821,8 @@ function tri(g, x1, y1, x2, y2, x3, y3) { g.beginPath(); g.moveTo(x1, y1); g.lin
 class ChunkCache {
   constructor() { this.map = new Map(); this.pixels = 0; this.budget = 10e6; }
   clear() { this.map.clear(); this.pixels = 0; }
-  markAll() { for (const e of this.map.values()) e.dirty = true; }
-  mark(k) { const e = this.map.get(k); if (e) e.dirty = true; }
+  markAll() { for (const e of this.map.values()) e.dirty = 3; }   // 3: the season changed
+  mark(k) { const e = this.map.get(k); if (e && !e.dirty) e.dirty = 1; }   // 1: a tree felled or a path worn
   get(k) { return this.map.get(k); }
   put(k, e) {
     const old = this.map.get(k);
@@ -1928,7 +1928,7 @@ class Renderer {
     }
     // finished buildings are painted into the chunk, so a big town costs a few image draws a frame, not thousands
     if (bake) for (const b of bake.list) this.paintBuilding(g, b, b.x, b.y);
-    this.cache.put(cx + ',' + cy, { cv, res, dirty: false, used: performance.now(), sig: bake ? bake.sig : 0 });
+    this.cache.put(cx + ',' + cy, { cv, res, dirty: 0, used: performance.now(), at: performance.now(), sig: bake ? bake.sig : 0 });
   }
   // finished buildings grouped by every chunk their picture overlaps, with a fingerprint that changes when any of them looks different
   bakes() {
@@ -1952,21 +1952,27 @@ class Renderer {
     W.dirty.clear();
     let res = 4; while (res < k && res < 48) res *= 2;
     res = Math.min(res, 48);
-    const throttle = now - this.lastTerr > 150;
-    let budget = 3;
     const bakes = this.bakes(), none = { list: [], sig: 0 };
     const cx0 = Math.floor(Math.max(W.x0, cam.x) / CS), cy0 = Math.floor(Math.max(W.y0, cam.y) / CS);
     const cx1 = Math.floor((Math.min(W.x1, cam.x + cam.w) - 0.001) / CS), cy1 = Math.floor((Math.min(W.y1, cam.y + cam.h) - 0.001) / CS);
+    // repaint stale chunks for up to ~3 ms a frame, most important first: a new season or new buildings,
+    // then a new zoom level, then (at most every 2 s per chunk) felled trees and worn paths
+    const stale = [];
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
+      const id = cx + ',' + cy, bk = bakes.get(id) || none, e = this.cache.get(id);
+      if (!e) { this.renderChunk(cx, cy, res, bk); continue; }
+      const pri = e.dirty === 3 || e.sig !== bk.sig ? 3 : e.res !== res ? 2 : e.dirty && now - e.at > 2000 ? 1 : 0;
+      if (pri) stale.push({ cx, cy, bk, pri });
+    }
+    stale.sort((a, b) => b.pri - a.pri);
+    const t0 = performance.now();
+    for (const s of stale) { if (performance.now() - t0 > 3) break; this.renderChunk(s.cx, s.cy, res, s.bk); }
     const over = 1 / k;   // a pixel of overlap hides seams between chunks
     for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) {
-      const id = cx + ',' + cy, bk = bakes.get(id) || none;
-      let e = this.cache.get(id);
-      if (!e) { this.renderChunk(cx, cy, res, bk); e = this.cache.get(id); }
-      else if ((e.dirty || e.res !== res || e.sig !== bk.sig) && throttle && budget > 0) { budget--; this.renderChunk(cx, cy, res, bk); e = this.cache.get(id); }
+      const e = this.cache.get(cx + ',' + cy);
       e.used = now;
       ctx.drawImage(e.cv, cx * CS, cy * CS, CS + over, CS + over);
     }
-    if (budget < 3) this.lastTerr = now;
   }
 
   // ---------- buildings, camps and people ----------
