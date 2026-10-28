@@ -437,6 +437,7 @@ const ERA_LOOK = [
 // roads are built by each realm's builders: walking speed on open ground, a dirt road, a stone road and an asphalt road
 const ROAD_SPEED = [1, 1.4, 1.65, 1.9];
 const ROAD_KINDS = ['', 'Dirt road', 'Stone road', 'Asphalt road'];
+const ROAD_ENDS = new Set(['tc', 'store', 'market', 'chapel', 'cathedral', 'castle', 'palace', 'wonder', 'dock', 'barracks', 'farm']);
 const roadTier = era => era >= 5 ? 3 : era >= 3 ? 2 : 1;
 const HOUSING = ['tc', 'hut', 'house', 'manor'];
 const LANDMARKS = ['chapel', 'market', 'cathedral', 'castle', 'palace'];
@@ -1127,16 +1128,21 @@ class Steward {
     }
     if (!best) return;
     const p = W.searchBox(t.x, t.y, best.x, best.y, 6, { [f.id]: true }, true);
-    if (p) this.queueRoad(p.slice(0, -1)); else best._noRoad = G.day + YEAR;   // boxed in: try again next year
+    // only a fairly direct road is worth building; one that has to snake round the town waits a year for a better way through
+    if (p && p.length <= (Math.abs(best.x - t.x) + Math.abs(best.y - t.y)) * 1.5 + 3) this.queueRoad(p.slice(0, -1)); else best._noRoad = G.day + YEAR;
   }
-  // a trade road is built by both realms, each laying the half nearer its own town centre
-  planTradeRoad(o) {
-    const f = this.f, a = f.tc, b = o.tc, W = G.world;
-    const k = '_noRoad' + o.id;
-    if (!a || !b || f.roadPlan.length > 4 || this[k] > G.day) return;
-    const p = W.searchBox(a.x, a.y, b.x, b.y, 12, { [f.id]: true, [o.id]: true }, true);
-    if (!p) this[k] = G.day + YEAR;
-    if (p) this.queueRoad(p.slice(0, -1), (T, i) => i < p.length / 2 || T.own === f.id);
+  // a trade road is surveyed once for the route, then each realm lays the half nearer its own town centre, so the halves meet
+  planTradeRoad(o, r) {
+    const f = this.f, W = G.world;
+    if (!r.lane) {
+      const A = G.F(r.a), B = G.F(r.b), a = A && A.tc, b = B && B.tc;
+      if (!a || !b) return;
+      const p = W.searchBox(a.x, a.y, b.x, b.y, 12, { [A.id]: true, [B.id]: true }, true);
+      r.lane = p && p.length <= (Math.abs(a.x - b.x) + Math.abs(a.y - b.y)) * 1.4 + 6 ? [{ x: a.x, y: a.y }, ...p].map(q => ({ x: q.x, y: q.y })) : [];
+    }
+    if (!r.lane.length || f.roadPlan.length > 4) return;
+    const mine = r.a === f.id, n = r.lane.length;
+    this.queueRoad(mine ? r.lane : r.lane.slice().reverse(), (T, i) => i < n / 2 || T.own === f.id);
   }
   trade() {
     const f = this.f, c = f.cap;
@@ -1981,7 +1987,7 @@ class Trade {
       C.record(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good', a);
       if (Math.max(a.age, b.age) >= 3 && this.routes.length <= 3) C.card('Trade', `${upper(r.name)} opens`, `Caravans will carry goods between ${a.name} and ${b.name}.`, a);
     }
-    for (const r of this.routes) if (rnd() < 0.05) { const a = G.F(r.a), b = G.F(r.b); if (a && b) { a.steward.planTradeRoad(b); b.steward.planTradeRoad(a); } }
+    for (const r of this.routes) if (rnd() < 0.05) { const a = G.F(r.a), b = G.F(r.b); if (a && b) { a.steward.planTradeRoad(b, r); b.steward.planTradeRoad(a, r); } }
     for (const r of this.routes) {
       const n = this.caravans.filter(c => c.r === r).length;
       if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5, from = back ? r.b : r.a, fr = G.F(from); this.caravans.push({ r, from, to: back ? r.a : r.b, back, d: 0, sp: 1 + (fr ? fr.fx('cart') : 0), era: fr ? fr.era : 0 }); }
@@ -2521,7 +2527,8 @@ class Renderer {
     const W = G.world, k = T.road, w = 0.56, o = (1 - w) / 2;
     const col = k === 3 ? '#4a4d52' : k === 2 ? (se === 3 ? '#c4c2bc' : '#a7a39a') : (se === 3 ? '#cbbba3' : '#a8834f');
     const edge = k === 3 ? '#34363a' : k === 2 ? '#7c786f' : '#7d5f38';
-    const arms = N4.filter(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && (N.road || N.b); });
+    // join neighbouring road, and run into the buildings roads are built to serve (not every house along the way)
+    const arms = N4.filter(([dx, dy]) => { const N = W.tile(x + dx, y + dy); if (!N) return false; if (N.road) return true; const b = N.b && G.byId(N.b); return !!b && ROAD_ENDS.has(b.type); });
     const band = (fn) => { fn(o, o, w, w); for (const [dx, dy] of arms) { if (dx === 1) fn(1 - o, o, o, w); if (dx === -1) fn(0, o, o, w); if (dy === 1) fn(o, 1 - o, w, o); if (dy === -1) fn(o, 0, w, o); } };
     g.fillStyle = edge; band((a, b, c, d) => g.fillRect(x + a - 0.05, y + b - 0.05, c + 0.1, d + 0.1));
     g.fillStyle = col; band((a, b, c, d) => g.fillRect(x + a, y + b, c, d));
