@@ -434,8 +434,10 @@ const ERA_LOOK = [
   { wall: '#9c4a36', roof: '#4b4f57', win: '#f6dc8a' },
   { wall: '#cfd5da', roof: '#5d7a95', win: '#bfe3f5' },
 ];
-// walking speed on open ground, a worn path, a paved street and a trade road
-const ROAD_SPEED = [1, 1.25, 1.5, 1.6];
+// roads are built by each realm's builders: walking speed on open ground, a dirt road, a stone road and an asphalt road
+const ROAD_SPEED = [1, 1.4, 1.65, 1.9];
+const ROAD_KINDS = ['', 'Dirt road', 'Stone road', 'Asphalt road'];
+const roadTier = era => era >= 5 ? 3 : era >= 3 ? 2 : 1;
 const HOUSING = ['tc', 'hut', 'house', 'manor'];
 const LANDMARKS = ['chapel', 'market', 'cathedral', 'castle', 'palace'];
 const FACTION_NAMES = ['Thornbury', 'Greywater', 'Oakhurst', 'Larkspur', 'Ravensby', 'Millhaven', 'Stonebridge', 'Kestrel Hill', 'Ashford', 'Hollowell', 'Wyndham', 'Fallowmere', 'Corrowmere', 'Brackenhold', 'Northcombe', 'Eastwick', 'Dunhallow', 'Ironbrook',
@@ -481,11 +483,11 @@ let G = null;   // the running game
 
 // ========== the land ==========
 class Tile {
-  constructor(t, amt, h) { this.t = t; this.amt = amt; this.h = h; this.sap = 0; this.foot = 0; this.b = 0; this.c = 0; this.own = 0; }
+  constructor(t, amt, h) { this.t = t; this.amt = amt; this.h = h; this.sap = 0; this.foot = 0; this.b = 0; this.c = 0; this.own = 0; this.road = 0; }
   get water() { return this.t === 3; }
   get open() { return this.t === 0 || this.t === 1; }
-  // how fast people cross this tile: worn paths, paved streets and trade roads are quicker than open ground
-  get speed() { return this.road ? ROAD_SPEED[3] : this.foot > 160 ? ROAD_SPEED[2] : this.foot > 60 ? ROAD_SPEED[1] : 1; }
+  // how fast people cross this tile: built roads are quicker than open ground (footpaths are just wear)
+  get speed() { return ROAD_SPEED[this.road]; }
 }
 
 // The world is a rectangle of chunks that grows outward as settlements need land.
@@ -573,7 +575,8 @@ class World {
     this._reach[f.id] = { stamp, r };
     return r;
   }
-  searchBox(sx, sy, tx, ty, m, pass) {
+  // plan: lay out a new road instead of a walk (no buildings, rock or camps in the way, existing road almost free)
+  searchBox(sx, sy, tx, ty, m, pass, plan) {
     const bx0 = Math.max(this.x0, Math.min(sx, tx) - m), by0 = Math.max(this.y0, Math.min(sy, ty) - m);
     const bx1 = Math.min(this.x1 - 1, Math.max(sx, tx) + m), by1 = Math.min(this.y1 - 1, Math.max(sy, ty) + m);
     const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1, nb = bw * bh;
@@ -582,7 +585,7 @@ class World {
     // scratch arrays are reused between searches: a stamp marks which entries belong to this one
     if (!this._sb || this._sb.n < nb) this._sb = { n: nb, prev: new Int32Array(nb), g: new Float32Array(nb), seen: new Uint32Array(nb), done: new Uint32Array(nb), heap: new Int32Array(nb * 4), f: new Float32Array(nb * 4), run: 0 };
     const S = this._sb, prev = S.prev, gs = S.g, seen = S.seen, done = S.done, heap = S.heap, fs = S.f, run = ++S.run;
-    const hk = 1 / ROAD_SPEED[3];
+    const hk = plan ? 0.25 : 1 / ROAD_SPEED[3];
     const h = n => (Math.abs(n % bw - (tx - bx0)) + Math.abs(((n / bw) | 0) - (ty - by0))) * hk;
     let hn = 0;
     const push = (n, f) => {
@@ -614,7 +617,8 @@ class World {
         const T = this.tiles[(ny + by0 - this.y0) * this.w + (nx + bx0 - this.x0)];
         if (pass && T.own && !pass[T.own]) continue;
         if (n !== goal && T.t === 3) continue;
-        const g = gc + 1 / T.speed;
+        if (plan && n !== goal && (T.b || T.c || T.t === 2)) continue;
+        const g = gc + (plan ? (T.road ? 0.25 : 1) : 1 / T.speed);
         if (seen[n] === run && gs[n] <= g) continue;
         seen[n] = run; gs[n] = g; prev[n] = cur; push(n, g + h(n));
       }
@@ -626,9 +630,9 @@ class World {
   }
   // saves keep only what can't be regenerated: the terrain type, what's left of it, regrowth and footpaths
   toJSON() {
-    const t = [], a = [], sp = [], ft = [];
-    for (const T of this.tiles) { t.push(T.t); a.push(T.amt); sp.push(T.sap); ft.push(Math.round(T.foot)); }
-    return { seed: this.seed, x0: this.x0, y0: this.y0, w: this.w, h: this.h, t: t.join(''), a, sp, ft };
+    const t = [], a = [], sp = [], ft = [], rd = [];
+    for (const T of this.tiles) { t.push(T.t); a.push(T.amt); sp.push(T.sap); ft.push(Math.round(T.foot)); rd.push(T.road); }
+    return { seed: this.seed, x0: this.x0, y0: this.y0, w: this.w, h: this.h, t: t.join(''), a, sp, ft, rd: rd.join('') };
   }
   static from(d) {
     const W2 = new World(d.seed);
@@ -636,7 +640,7 @@ class World {
     W2.tiles = new Array(d.w * d.h);
     for (let i = 0; i < d.w * d.h; i++) {
       const x = W2.x0 + i % d.w, y = W2.y0 + ((i / d.w) | 0);
-      const T = new Tile(+d.t[i], d.a[i], hash2(x, y, d.seed + 9)); T.sap = d.sp[i]; T.foot = d.ft[i];
+      const T = new Tile(+d.t[i], d.a[i], hash2(x, y, d.seed + 9)); T.sap = d.sp[i]; T.foot = d.ft[i]; T.road = d.rd ? +d.rd[i] : 0;
       W2.tiles[i] = T;
     }
     return W2;
@@ -742,7 +746,16 @@ class Colonist {
     }
     if (this.job === 'builder') {
       const sites = f.buildings.filter(b => !b.built && b.onHome && this.reach(b.x, b.y));
-      if (!sites.length) return null;
+      if (!sites.length) {
+        // no buildings to raise: lay the next stretch of planned road
+        let best = null, bd = 1e9;
+        for (const p of f.roadPlan.slice(0, 8)) {
+          if (cl.tile(p.x, p.y) >= 1 || !this.reach(p.x, p.y)) continue;
+          const d = dist(this, p.x, p.y);
+          if (d < bd) { bd = d; best = { x: p.x, y: p.y, id: 0 }; }
+        }
+        return best;
+      }
       sites.sort((a, b) => (cl.tid(a.id) - cl.tid(b.id)) * 3 + dist(this, a.x, a.y) - dist(this, b.x, b.y));
       return sites[0];
     }
@@ -826,6 +839,20 @@ class Colonist {
         this.carry = { r: want === 1 ? 'wood' : 'stone', n };
         this.goStore();
       }
+    } else if (this.job === 'builder' && !this.tid) {
+      const i = f.roadPlan.findIndex(p => p.x === this.tx && p.y === this.ty), W = G.world, T = W.tile(this.tx, this.ty);
+      if (i < 0 || !T || !f.steward.roadOk(T)) { if (i >= 0) f.roadPlan.splice(i, 1); return quit(); }
+      this.wt += dt * (1 + f.fx('build'));
+      if (this.wt < 3) return;
+      const cost = f.steward.roadCost();
+      if (!f.afford(cost)) return quit();
+      f.pay(cost);
+      f.roadPlan.splice(i, 1);
+      T.road = roadTier(f.era);
+      if (T.t === 1) { T.t = 0; T.amt = 0; }
+      T.sap = 0;
+      W.touch(this.tx, this.ty); W.touch(this.tx - 1, this.ty); W.touch(this.tx + 1, this.ty); W.touch(this.tx, this.ty - 1); W.touch(this.tx, this.ty + 1);
+      quit();
     } else if (this.job === 'builder') {
       const b = G.byId(this.tid);
       if (!b || b.built || b.f !== f.id || !b.onHome) return quit();
@@ -892,12 +919,13 @@ class Steward {
     if (f.res.food > c * 0.9) foodShare -= 0.2;
     const want = {};
     want.farmer = Math.min(slots, Math.max(1, Math.ceil(pop * foodShare)));
-    want.builder = sites ? Math.min(Math.ceil(sites * 1.6), Math.max(1, Math.ceil(pop * 0.18))) : 0;
+    const roadWork = f.afford(this.roadCost()) ? Math.min(2, Math.ceil(f.roadPlan.length / 8)) : 0, work = sites + roadWork;
+    want.builder = work ? Math.min(Math.ceil(work * 1.6), Math.max(1, Math.ceil(pop * 0.18))) : 0;
     const stoneHungry = f.res.stone < c * 0.85;
     want.miner = stoneHungry ? Math.max(1, Math.ceil(pop * (f.age >= 2 ? 0.22 : 0.15))) : 0;
     let rest = pop - want.farmer - want.builder - want.miner;
     if (rest < 0) { want.miner = Math.max(0, want.miner + rest); rest = pop - want.farmer - want.builder - want.miner; }
-    if (rest < 0) { want.builder = Math.max(sites ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner; }
+    if (rest < 0) { want.builder = Math.max(work ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner; }
     want.woodcutter = Math.max(0, rest);
     if (f.res.wood >= c * 0.95 && want.woodcutter > 1) { const m = Math.floor(want.woodcutter / 2); want.woodcutter -= m; if (stoneHungry) want.miner += m; else want.farmer += m; }
     const have = {}; for (const k in JOBS) have[k] = 0;
@@ -920,7 +948,7 @@ class Steward {
   }
   canPlace(type, x, y) {
     const W = G.world, T = W.tile(x, y);
-    if (!T || T.b || T.c || T.own !== this.f.id || !T.open) return false;
+    if (!T || T.b || T.c || T.road || T.own !== this.f.id || !T.open) return false;
     if (type === 'dock') return N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.t === 3; });
     return N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.t !== 3 && !N.b; });
   }
@@ -945,6 +973,7 @@ class Steward {
       if (d < 1.5) continue;
       let sc = T.t === 1 ? 1.8 : 0;
       if (T.foot > 60 && type !== 'dock') sc += 2.5;
+      if (type !== 'farm' && type !== 'dock' && N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.road; })) sc -= 1.2;   // front onto a road
       if (HOUSING.includes(type)) {
         sc += d * 0.9 - this.near(x, y, 1, isType(HOUSING)) * 0.7 + this.near(x, y, 1, isType(['farm'])) * 1.2 + j * 1.8;
       } else if (type === 'farm') {
@@ -1061,6 +1090,54 @@ class Steward {
     }
     G.dirtyB();
   }
+  // ---------- roads ----------
+  // Roads are planned, not worn in: the steward links the town centre to whatever its people travel to most,
+  // one destination at a time, and builders lay the planned tiles for wood (and stone from the Medieval Era).
+  roadCost() { return this.f.era >= 3 ? { wood: 2, stone: 1 } : { wood: 2 }; }
+  roadOk(T) { return T && !T.road && !T.b && !T.c && T.t !== 2 && T.t !== 3 && (!T.own || T.own === this.f.id); }
+  queueRoad(path, keep) {
+    const f = this.f, W = G.world, have = new Set(f.roadPlan.map(p => p.x + ',' + p.y));
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i], T = W.tile(p.x, p.y);
+      if (!this.roadOk(T) || have.has(p.x + ',' + p.y) || (keep && !keep(T, i))) continue;
+      f.roadPlan.push({ x: p.x, y: p.y }); have.add(p.x + ',' + p.y);
+    }
+  }
+  planRoads() {
+    const f = this.f, t = f.tc, W = G.world;
+    f.roadPlan = f.roadPlan.filter(p => this.roadOk(W.tile(p.x, p.y)));
+    if (!t || f.age < 1 || f.roadPlan.length > 4) return;
+    // the road network that already reaches the town centre
+    const net = new Set(), q = [];
+    for (const [dx, dy] of N4) { const T = W.tile(t.x + dx, t.y + dy); if (T && T.road) { const k = (t.x + dx) + ',' + (t.y + dy); net.add(k); q.push([t.x + dx, t.y + dy]); } }
+    while (q.length) {
+      const [x, y] = q.pop();
+      for (const [dx, dy] of N4) { const k = (x + dx) + ',' + (y + dy); if (net.has(k)) continue; const T = W.tile(x + dx, y + dy); if (T && T.road) { net.add(k); q.push([x + dx, y + dy]); } }
+    }
+    const linked = b => N4.some(([dx, dy]) => net.has((b.x + dx) + ',' + (b.y + dy)));
+    const PRI = { tc: 6, store: 5, market: 4, chapel: 3, cathedral: 3, castle: 3, palace: 3, wonder: 3, dock: 2, barracks: 2, farm: 1 };
+    let best = null, bs = -1e9;
+    for (const b of f.buildings) {
+      const pr = PRI[b.type];
+      if (!pr || b === t || !b.built || !b.onHome || b._noRoad > G.day || linked(b)) continue;
+      const d = Math.hypot(b.x - t.x, b.y - t.y);
+      if (d < 2.5 || (b.type === 'farm' && d < 5)) continue;
+      const sc = pr * 10 - d / 3;
+      if (sc > bs) { bs = sc; best = b; }
+    }
+    if (!best) return;
+    const p = W.searchBox(t.x, t.y, best.x, best.y, 6, { [f.id]: true }, true);
+    if (p) this.queueRoad(p.slice(0, -1)); else best._noRoad = G.day + YEAR;   // boxed in: try again next year
+  }
+  // a trade road is built by both realms, each laying the half nearer its own town centre
+  planTradeRoad(o) {
+    const f = this.f, a = f.tc, b = o.tc, W = G.world;
+    const k = '_noRoad' + o.id;
+    if (!a || !b || f.roadPlan.length > 4 || this[k] > G.day) return;
+    const p = W.searchBox(a.x, a.y, b.x, b.y, 12, { [f.id]: true, [o.id]: true }, true);
+    if (!p) this[k] = G.day + YEAR;
+    if (p) this.queueRoad(p.slice(0, -1), (T, i) => i < p.length / 2 || T.own === f.id);
+  }
   trade() {
     const f = this.f, c = f.cap;
     for (let i = 0; i < f.builtCount('market'); i++) {
@@ -1079,6 +1156,7 @@ class Settlement {
     if (this.note === undefined) this.note = typeof steward === 'string' ? steward : '';
     if (this.ruler && !(this.ruler instanceof Ruler)) this.ruler = new Ruler(this.ruler);
     if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
+    if (!this.roadPlan) this.roadPlan = [];
     if (!this.techs) {   // saves from before the tech tree: credit older realms with the early eras
       const n = Math.floor((this.age + 1) / 2);
       this.techs = Object.keys(TECHS).filter(t => TECHS[t].era < n); this.study = null; this.sci = 0;
@@ -1093,7 +1171,7 @@ class Settlement {
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
       stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
       culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40,
-      techs: parent ? parent.techs.slice() : [], study: null, sci: 0 });
+      techs: parent ? parent.techs.slice() : [], study: null, sci: 0, roadPlan: [] });
     f.ruler = Ruler.crown(f);
     return f;
   }
@@ -1185,7 +1263,9 @@ class Settlement {
     C.record(`${this.name} entered the ${nm}${first ? ', the first realm in the world to get there' : ''}.`, 'age', this);
     if (first) C.card('First in the world', `${this.name} enters the ${nm}`, `${TECHS[got[got.length - 1]].name} opens a new era. Its buildings, roads and armies change with it.`, this);
     View.toast(`${this.name} entered the ${nm}`, 'good');
-    G.world.touchAll();   // paths and buildings take on the new era's look
+    const tier = roadTier(e);   // the realm's roads are rebuilt in the new era's material
+    for (const T of G.world.tiles) if (T.road && T.own === this.id && T.road < tier) T.road = tier;
+    G.world.touchAll();   // roads and buildings take on the new era's look
   }
   get defense() { return this.military + G.alive().reduce((n, o) => n + (o !== this && G.dip.stanceOf(this, o) === 'ally' ? Math.floor(o.military / 3) : 0), 0); }
   get enemies() { return G.alive().filter(o => o !== this && G.dip.stanceOf(this, o) === 'war'); }
@@ -1286,6 +1366,7 @@ class Settlement {
     this.greatDaily();
     this.milestones();
     this.research();
+    if (rnd() < 0.3) this.steward.planRoads();
     let hungry = 0, starved = 0;
     for (const c of shuffle(this.people.slice())) {
       if (this.res.food >= 1) { this.res.food--; c.hun = 0; } else { c.hun++; hungry++; if (c.hun >= 3) { G.kill(c); starved++; } }
@@ -1900,7 +1981,7 @@ class Trade {
       C.record(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good', a);
       if (Math.max(a.age, b.age) >= 3 && this.routes.length <= 3) C.card('Trade', `${upper(r.name)} opens`, `Caravans will carry goods between ${a.name} and ${b.name}.`, a);
     }
-    this.markRoads();
+    for (const r of this.routes) if (rnd() < 0.05) { const a = G.F(r.a), b = G.F(r.b); if (a && b) { a.steward.planTradeRoad(b); b.steward.planTradeRoad(a); } }
     for (const r of this.routes) {
       const n = this.caravans.filter(c => c.r === r).length;
       if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5, from = back ? r.b : r.a, fr = G.F(from); this.caravans.push({ r, from, to: back ? r.a : r.b, back, d: 0, sp: 1 + (fr ? fr.fx('cart') : 0), era: fr ? fr.era : 0 }); }
@@ -1921,16 +2002,6 @@ class Trade {
       G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + 0.5, -100, 100);
       if (to.tc) View.float(to.tc.x, to.tc.y, '⚖', '#f0d9a0');
     }
-  }
-  // the ground under every open road is marked so people walk it faster; redone when a road opens, closes or is re-laid
-  markRoads() {
-    const sig = this.routes.map(r => r.id + ':' + r._s + ':' + (r._p ? r._p.length : 0)).join('|');
-    if (sig === this._roadSig) return;
-    this._roadSig = sig;
-    const W = G.world;
-    for (const T of this._roadTiles || []) T.road = 0;
-    this._roadTiles = [];
-    for (const r of this.routes) for (const p of r._p || []) { const T = W.tile(p.x, p.y); if (T && !T.road) { T.road = 1; this._roadTiles.push(T); } }
   }
   // where a caravan is on its road, in tile coordinates
   at(c) {
@@ -2416,14 +2487,12 @@ class Renderer {
     g.fillStyle = GRASS[se]; g.fillRect(x, y, 1, 1);
     g.fillStyle = GRASS_DK[se];
     for (let k = 0; k < 4; k++) g.fillRect(x + hv(T.h, k) * 0.85, y + hv(T.h, k + 7) * 0.85, 0.08, 0.08);
-    if (T.foot > 12) {
-      const of = T.own ? G.F(T.own) : null, era = of ? of.era : 0, paved = of && (of.age >= 3 || era >= 3) && T.foot > 160, tar = paved && era >= 5;
-      const a = Math.min(0.6, (T.foot - 12) / 120);
-      g.fillStyle = tar ? `rgba(86,88,92,${Math.min(0.95, a + 0.3)})` : paved ? `rgba(150,146,138,${Math.min(0.95, a + 0.2)})` : (se === 3 ? `rgba(170,160,150,${a})` : `rgba(140,108,70,${a})`);
+    if (T.foot > 12 && !T.road) {   // footpaths are only wear in the grass
+      const a = Math.min(0.5, (T.foot - 12) / 140);
+      g.fillStyle = se === 3 ? `rgba(170,160,150,${a})` : `rgba(140,108,70,${a})`;
       g.fillRect(x + 0.04, y + 0.04, 0.92, 0.92);
-      if (tar) { g.fillStyle = 'rgba(230,226,210,.5)'; g.fillRect(x + 0.46, y + 0.2, 0.08, 0.22); g.fillRect(x + 0.46, y + 0.58, 0.08, 0.22); }
-      else if (paved) { g.strokeStyle = 'rgba(90,88,82,.35)'; g.lineWidth = 0.03; g.strokeRect(x + 0.1, y + 0.1, 0.38, 0.38); g.strokeRect(x + 0.52, y + 0.52, 0.38, 0.38); }
     }
+    if (T.road) this.drawRoad(g, T, x, y, se);
     if (T.t === 1) {
       const n = T.amt > 20 ? 3 : T.amt > 10 ? 2 : 1;
       const spots = [[0.3, 0.35], [0.7, 0.4], [0.5, 0.72]];
@@ -2445,6 +2514,21 @@ class Renderer {
       }
     } else if (T.sap > 0) {
       g.fillStyle = se === 3 ? '#2b5a42' : '#3d7f3a'; g.beginPath(); g.arc(x + 0.5, y + 0.55, 0.08, 0, 7); g.fill();
+    }
+  }
+  // a built road: a band that joins up with neighbouring roads and runs into the buildings it serves
+  drawRoad(g, T, x, y, se) {
+    const W = G.world, k = T.road, w = 0.56, o = (1 - w) / 2;
+    const col = k === 3 ? '#4a4d52' : k === 2 ? (se === 3 ? '#c4c2bc' : '#a7a39a') : (se === 3 ? '#cbbba3' : '#a8834f');
+    const edge = k === 3 ? '#34363a' : k === 2 ? '#7c786f' : '#7d5f38';
+    const arms = N4.filter(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && (N.road || N.b); });
+    const band = (fn) => { fn(o, o, w, w); for (const [dx, dy] of arms) { if (dx === 1) fn(1 - o, o, o, w); if (dx === -1) fn(0, o, o, w); if (dy === 1) fn(o, 1 - o, w, o); if (dy === -1) fn(o, 0, w, o); } };
+    g.fillStyle = edge; band((a, b, c, d) => g.fillRect(x + a - 0.05, y + b - 0.05, c + 0.1, d + 0.1));
+    g.fillStyle = col; band((a, b, c, d) => g.fillRect(x + a, y + b, c, d));
+    if (k === 2) { g.fillStyle = 'rgba(80,76,70,.35)'; for (let i = 0; i < 4; i++) g.fillRect(x + o + hv(T.h, i + 20) * (w - 0.08), y + o + hv(T.h, i + 30) * (w - 0.08), 0.08, 0.06); }
+    if (k === 3) {
+      g.fillStyle = '#e8e2c8';
+      for (const [dx, dy] of arms) { if (dx) g.fillRect(x + (dx > 0 ? 0.6 : 0.1), y + 0.48, 0.3, 0.04); else g.fillRect(x + 0.48, y + (dy > 0 ? 0.6 : 0.1), 0.04, 0.3); }
     }
   }
   renderChunk(cx, cy, res, bake) {
@@ -2785,30 +2869,11 @@ class Renderer {
     const y = h >= W.h ? W.y0 + (W.h - h) / 2 : clamp(cy - h / 2, W.y0, W.y1 - h);
     return { x, y, w, h };
   }
-  // trade roads as one dashed stroke, caravans as small carts: a handful of draw calls however busy trade gets
+  // caravans as small carts, trains or trucks: a handful of draw calls however busy trade gets
   drawRoads(ctx, k, dpr, inView) {
     const T = G.trade;
     if (!T.routes.length) return;
-    // a road is only as good as the less advanced realm at either end: dirt, then cobbles, railways and highways
-    const lw = Math.max(0.1, 1.6 * dpr / k);
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    const STY = [['rgba(70,46,22,.6)', '#f3dc9c', [2.5, 2]], ['rgba(80,78,74,.75)', '#d8d4ca', [1.2, 0.8]], ['#26221f', '#b89a70', [0.5, 1.1]], ['#45484c', '#f2e7a8', [3, 2.5]]];
-    for (let st = 0; st < 4; st++) {
-      let any = false;
-      ctx.beginPath();
-      for (const r of T.routes) {
-        const p = r._p; if (!p || !p.length) continue;
-        const a = G.F(r.a), b = G.F(r.b), e = Math.min(a ? a.era : 0, b ? b.era : 0);
-        if ((e >= 6 ? 3 : e >= 5 ? 2 : e >= 3 ? 1 : 0) !== st) continue;
-        any = true;
-        ctx.moveTo(p[0].x + 0.5, p[0].y + 0.5);
-        for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x + 0.5, p[i].y + 0.5);
-      }
-      if (!any) continue;
-      const [edge, mid, dash] = STY[st];
-      ctx.strokeStyle = edge; ctx.lineWidth = lw * (st === 3 ? 3.2 : 2.4); ctx.stroke();
-      ctx.strokeStyle = mid; ctx.lineWidth = st === 2 ? lw * 2 : lw; ctx.setLineDash([lw * dash[0], lw * dash[1]]); ctx.stroke(); ctx.setLineDash([]);
-    }
+    // the roads themselves are built on the ground (see drawRoad); this draws only the caravans on them
     const s = Math.max(0.32, 4 * dpr / k);
     for (const c of T.caravans) {
       if (!c.r._p) continue;
@@ -3011,8 +3076,8 @@ class Interface {
     if (T.t === 2) return `<b>Rock</b> · ${T.amt} stone left${land}`;
     if (T.t === 3) return '<b>Lake</b>';
     if (T.sap) return `<b>Saplings</b> · forest again in ${T.sap} days${land}`;
-    const way = T.road ? 'Trade road' : T.foot > 160 ? 'Paved street' : T.foot > 60 ? 'Footpath' : T.foot > 20 ? 'Faint track' : 'Meadow';
-    return `<b>${way}</b>${T.speed > 1 ? ` · walkers move ${Math.round((T.speed - 1) * 100)}% faster` : ''}${land}`;
+    if (T.road) return `<b>${ROAD_KINDS[T.road]}</b> · walkers move ${Math.round((T.speed - 1) * 100)}% faster${land}`;
+    return `<b>${T.foot > 20 ? 'Footpath' : 'Meadow'}</b>${T.foot > 20 ? ' · worn by walkers, no faster' : ''}${land}`;
   }
   tap(e) {
     if (!G || !R.cam) return;
