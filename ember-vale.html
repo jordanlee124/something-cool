@@ -1001,7 +1001,8 @@ class Steward {
     if (!T || T.b || T.c || T.road || T.own !== this.f.id || !T.open) return false;
     if (this._planned && this._planned.has(W.idx(x, y))) return false;   // keep planned roads clear
     if (type === 'quarry' && !this._anyPit && this.near(x, y, 2, T2 => T2.t === 2) < 2) return false;
-    if (type === 'farm' && this.f.age >= 3 && Math.hypot(x - this.f.tc.x, y - this.f.tc.y) < this.core()) return false;   // cities keep fields out of the centre
+    // fields belong outside the built-up town, never against its houses
+    if (type === 'farm' && this.f.age >= 2 && (Math.hypot(x - this.f.tc.x, y - this.f.tc.y) < this.townR() + 1 || this.near(x, y, 1, this.isHome) > 0)) return false;
     if (type === 'dock') return N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.t === 3; });
     return N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.t !== 3 && !N.b; });
   }
@@ -1031,10 +1032,12 @@ class Steward {
       const onRoad = N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.road; });
       if (type !== 'farm' && type !== 'dock' && onRoad) sc -= 1.2;   // front onto a road
       if (HOUSING.includes(type)) {
-        sc += d * 0.9 - this.near(x, y, 1, isType(HOUSING)) * 0.7 + this.near(x, y, 1, isType(['farm'])) * 1.2 + j * 1.8;
+        // land is worth most near the centre and next to other homes, so the town fills in from the middle outward
+        sc += d * 1.3 - this.near(x, y, 1, isType(HOUSING)) * 0.9 + this.near(x, y, 1, isType(['farm'])) * 1.5 + j * 0.6;
       } else if (type === 'farm') {
-        const ring = 3 + Math.sqrt(nb) * 0.75;
-        sc += Math.abs(d - ring) * 0.8 - this.near(x, y, 1, isType(['farm'])) * 0.9 + this.near(x, y, 1, isType(HOUSING)) * 0.8 + j * 1.5;
+        // a belt of fields just beyond the houses, in blocks rather than scattered plots
+        const ring = f.age >= 2 ? this.townR() + 2.5 : 3 + Math.sqrt(nb) * 0.75;
+        sc += Math.abs(d - ring) * 0.8 - this.near(x, y, 1, isType(['farm'])) * 1.3 + this.near(x, y, 1, isType(HOUSING)) * 1.2 + j * 0.8;
       } else if (type === 'store') {
         const dr = f.nearestDrop(x, y), dd = dr ? Math.abs(dr.x - x) + Math.abs(dr.y - y) : 10;
         sc += -Math.min(dd, 9) * 1.1 - this.near(x, y, 3, T2 => T2.t === 1 || T2.t === 2) * 0.35 - this.near(x, y, 2, isType(['farm'])) * 0.4 + d * 0.35 + j;
@@ -1055,7 +1058,7 @@ class Steward {
     }
     this._planned = null;
     if (home && !front && f.roadPlan.length === 0 && (f._noStreet || 0) <= G.day && f.age >= 1) {
-      if (!this.planStreet()) f._noStreet = G.day + SEASON_DAYS * 2;
+      if (!this.planStreet()) { f._noStreet = G.day + SEASON_DAYS * 2; this._landShort = G.day; }
     }
     if (home && !front && this.hasRoads() && (f._noStreet || 0) <= G.day) return null;   // wait for the street
     return home ? front || best : best;
@@ -1063,6 +1066,16 @@ class Steward {
   // the town centre's own road network counts: a lone trade lane at the edge doesn't
   hasRoads() { const t = this.f.tc; return !!t && N4.some(([dx, dy]) => { const T = G.world.tile(t.x + dx, t.y + dy); return T && T.road; }); }
   core() { return 2 + RADIUS[this.f.age] * 0.45; }
+  isHome(T) { if (!T.b) return false; const b = G.byId(T.b); return !!b && HOUSING.includes(b.type); }
+  // how far the built-up town reaches: most homes stand inside this distance of the town centre (worked out once a day)
+  townR() {
+    const f = this.f, t = f.tc;
+    if (!t) return 0;
+    if (this._townDay === G.day) return this._townR;
+    const ds = f.buildings.filter(b => b !== t && HOUSING.includes(b.type)).map(b => Math.hypot(b.x - t.x, b.y - t.y)).sort((a, b) => a - b);
+    this._townDay = G.day; this._townR = Math.max(3, ds.length ? ds[Math.floor(ds.length * 0.8)] : 0);
+    return this._townR;
+  }
   plantable(T, x, y) {
     if (!T || T.t !== 0 || T.sap || T.road || T.b || T.c || T.own !== this.f.id) return false;
     const t = this.f.tc;
@@ -1071,32 +1084,48 @@ class Steward {
     // keep road frontage and the ground beside other buildings clear for the town
     return !N4.some(([dx, dy]) => { const N = G.world.tile(x + dx, y + dy); if (!N) return false; if (N.road) return true; if (!N.b) return false; const b = G.byId(N.b); return !b || b.type !== 'forester'; });
   }
-  // a new street: a straight run of up to six tiles off an existing road, through open land, with room for homes on both sides
+  // a new street: a side street off an existing road at the edge of town, heading outward, with room for two rows of homes
+  // between it and the next street, and now and then a bend where the ground turns it
   planStreet() {
     const f = this.f, t = f.tc, W = G.world;
     if (!t) return false;
-    const reach = RADIUS[f.age] + 3;
+    const reach = RADIUS[f.age] + 3, tr = this.townR();
     const free = N => N && N.open && !N.b && !N.c && !N.road && N.own === f.id;
+    const roadNear = (x, y, px, py) => { for (const k of [1, 2, -1, -2]) { const N = W.tile(x + px * k, y + py * k); if (N && N.road) return true; } return false; };
     let best = null, bs = 0;
     for (let y = t.y - reach; y <= t.y + reach; y++) for (let x = t.x - reach; x <= t.x + reach; x++) {
       const T = W.tile(x, y);
       if (!T || !T.road || T.own !== f.id) continue;
-      for (const [dx, dy] of N4) {
-        const px = dy ? 1 : 0, py = dx ? 1 : 0, run = [];
-        let front = 0;
-        for (let k = 1; k <= 6; k++) {
-          const nx = x + dx * k, ny = y + dy * k, N = W.tile(nx, ny);
-          if (!this.roadOk(N) || !N.open || N.own !== f.id || Math.hypot(nx - t.x, ny - t.y) > reach) break;
-          const A = W.tile(nx + px, ny + py), B = W.tile(nx - px, ny - py);
-          if ((A && A.road) || (B && B.road)) break;   // never right beside another road
-          run.push({ x: nx, y: ny }); front += free(A) + free(B);
+      const d0 = Math.hypot(x - t.x, y - t.y);
+      if (d0 > tr + 3) continue;   // streets start at the edge of town, not out in the fields
+      for (const [dx0, dy0] of N4) {
+        // streets lead away from the centre (or along the edge), never back into it
+        if (d0 > 1.5 && (dx0 * (x - t.x) + dy0 * (y - t.y)) / d0 < -0.3) continue;
+        let dx = dx0, dy = dy0, cx = x, cy = y, bent = false, front = 0;
+        const run = [], len = 3 + Math.floor(hash2(x, y, G.day) * 3);
+        while (run.length < len) {
+          let nx = cx + dx, ny = cy + dy, N = W.tile(nx, ny);
+          const ok = (N, nx, ny, px, py) => this.roadOk(N) && N.open && N.own === f.id && Math.hypot(nx - t.x, ny - t.y) <= reach && !roadNear(nx, ny, px, py);
+          if (!ok(N, nx, ny, dy ? 1 : 0, dx ? 1 : 0)) {
+            if (bent || run.length < 2) break;
+            // turn once, to whichever side heads further from the centre
+            const turns = [[dy, -dx], [-dy, dx]].sort((a, b) => (b[0] * (cx - t.x) + b[1] * (cy - t.y)) - (a[0] * (cx - t.x) + a[1] * (cy - t.y)));
+            let turned = false;
+            for (const [tx, ty] of turns) { const M = W.tile(cx + tx, cy + ty); if (ok(M, cx + tx, cy + ty, ty ? 1 : 0, tx ? 1 : 0)) { dx = tx; dy = ty; turned = true; break; } }
+            if (!turned) break;
+            bent = true; nx = cx + dx; ny = cy + dy; N = W.tile(nx, ny);
+          }
+          const px = dy ? 1 : 0, py = dx ? 1 : 0;
+          run.push({ x: nx, y: ny }); front += free(W.tile(nx + px, ny + py)) + free(W.tile(nx - px, ny - py));
+          cx = nx; cy = ny;
         }
-        if (run.length < 3) continue;
-        const sc = front - run.length * 0.3 - Math.hypot(x - t.x, y - t.y) * 0.15 + rnd() * 0.5;
+        if (run.length < 2) continue;
+        const homes = this.near(x, y, 2, this.isHome);
+        const sc = front - run.length * 0.3 - d0 * 0.5 + Math.min(homes, 6) * 0.4 + rnd() * 1.2;
         if (sc > bs) { bs = sc; best = run; }
       }
     }
-    if (!best || bs < 3) return false;
+    if (!best || bs < 2) return false;
     this.queueRoad(best);
     f.note = 'Laying out a new street to build homes along.';
     return true;
@@ -1216,13 +1245,14 @@ class Steward {
   }
   redevelop() {
     const f = this.f, t = f.tc;
-    if (!t || f.age < 3 || (f._razeDay || 0) > G.day || G.day - (this._landShort || -1e9) > SEASON_DAYS) return;
-    const core = this.core();
-    const farm = f.buildings.filter(b => b.type === 'farm' && this.razeOk(b) && Math.hypot(b.x - t.x, b.y - t.y) < core)
+    if (!t || f.age < 2 || (f._razeDay || 0) > G.day || G.day - (this._landShort || -1e9) > SEASON_DAYS) return;
+    const tr = this.townR();
+    // the field the town has grown round: inside its edge, or hemmed in by homes
+    const farm = f.buildings.filter(b => b.type === 'farm' && this.razeOk(b) && (Math.hypot(b.x - t.x, b.y - t.y) < tr || this.near(b.x, b.y, 1, this.isHome) >= 3))
       .sort((a, b) => Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y))[0];
     if (!farm || !this.placeSpot('farm')) return;   // only if the field can be replaced further out
-    this.raze(farm, 'Clearing fields in the city centre to make room for homes.');
-    G.chron.note(`${f.name} cleared fields in the city centre to make room for homes.`);
+    this.raze(farm, 'The town has grown round an old field. Clearing it for homes.');
+    G.chron.note(`${f.name} built over an old field as the town grew outward.`);
   }
   // building sites that a neighbour's border swallowed can never be finished: an upgrade falls back to what stood there, a new site is given up
   dropStranded() {
@@ -1260,7 +1290,12 @@ class Steward {
       const [x, y] = q.pop();
       for (const [dx, dy] of N4) { const k = (x + dx) + ',' + (y + dy); if (net.has(k)) continue; const T = W.tile(x + dx, y + dy); if (T && T.road) { net.add(k); q.push([x + dx, y + dy]); } }
     }
-    const linked = b => N4.some(([dx, dy]) => net.has((b.x + dx) + ',' + (b.y + dy)));
+    // a field only needs the road to come near it, not to every plot; anything else needs a road at its door
+    const linked = b => {
+      const r = b.type === 'farm' ? 3 : 1;
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if ((r > 1 || !dx || !dy) && net.has((b.x + dx) + ',' + (b.y + dy))) return true;
+      return false;
+    };
     const PRI = { tc: 6, store: 5, market: 4, chapel: 3, cathedral: 3, castle: 3, palace: 3, wonder: 3, dock: 2, barracks: 2, farm: 1 };
     let best = null, bs = -1e9;
     for (const b of f.buildings) {
