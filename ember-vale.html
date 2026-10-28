@@ -3386,12 +3386,94 @@ class History {
   }
 }
 
+// ========== bands of settlers ==========
+// Every game starts with a few small bands walking out into the empty vale. Each weighs up the country near where it
+// landed (open ground, timber, stone, water), camps at a second place it might settle, and then raises the first hall of a village.
+class Band {
+  constructor(d) { Object.assign(this, d); }
+  // how good a place to settle is, or null if it can't be a village at all
+  static score(x, y, d, others) {
+    const W = G.world, T = W.tile(x, y);
+    if (!T || T.t !== 0 || T.b || x < W.x0 + 4 || y < W.y0 + 4 || x >= W.x1 - 4 || y >= W.y1 - 4) return null;
+    for (const o of others) if (o.site && Math.hypot(o.site.x - x, o.site.y - y) < 11) return null;
+    let open = 0, forest = 0, rock = 0, water = 0;
+    for (let yy = y - 6; yy <= y + 6; yy++) for (let xx = x - 6; xx <= x + 6; xx++) {
+      const U = W.tile(xx, yy); if (!U) continue;
+      const near = Math.abs(xx - x) <= 2 && Math.abs(yy - y) <= 2;
+      if (U.t === 0) { if (near) open++; } else if (U.t === 1) { forest++; if (near) open += 0.6; } else if (U.t === 2) rock++; else if (U.t === 3 && Math.abs(xx - x) <= 5 && Math.abs(yy - y) <= 5) water++;
+    }
+    if (open < 15) return null;
+    const sc = open * 0.6 + Math.min(forest, 10) * 0.7 + (rock > 0 ? 4 + Math.min(rock, 3) : -10) + (forest < 2 ? -8 : 0) + (water > 0 ? 3 + Math.min(water, 6) * 0.4 : 0) + (W.lux(x, y) ? 2 : 0) - d * 0.25 + rnd() * 4;
+    return { x, y, sc, forest, rock, water };
+  }
+  // pick where this band is heading: the best place within a day or two's walk, and maybe a second look at somewhere else first
+  static plan(b, others) {
+    const s = b.start, c = [];
+    for (let y = s.y - 16; y <= s.y + 16; y += 2) for (let x = s.x - 16; x <= s.x + 16; x += 2) {
+      const d = Math.hypot(x - s.x, y - s.y);
+      if (d > 16 || d < 6) continue;   // the landing place is only a clearing: the settlers go and look further afield
+      const r = Band.score(x, y, d, others); if (r) c.push(r);
+    }
+    c.sort((p, q) => q.sc - p.sc);
+    const B = c[0] || { x: s.x, y: s.y, forest: 3, rock: 1, water: 0 };
+    const A = c.find(r => Math.hypot(r.x - B.x, r.y - B.y) >= 7 && r.sc > B.sc - 12);
+    b.site = { x: B.x, y: B.y, forest: B.forest, rock: B.rock, water: B.water };
+    b.wp = A ? [{ x: A.x, y: A.y }, { x: B.x, y: B.y }] : [{ x: B.x, y: B.y }];
+    b.path = []; b.wait = DAY * (0.3 + rnd() * 0.5); b.camp = 1;
+  }
+  static step(dt) {
+    for (const b of G.bands.slice()) {
+      b.age = (b.age || 0) + dt;
+      if (b.wait > 0) { b.wait -= dt; if (b.wait <= 0) b.camp = 0; continue; }
+      const W = G.world;
+      if (!b.path.length) {
+        if (!b.wp.length) { Band.found(b); continue; }
+        const t = b.wp[0], p = W.searchBox(Math.round(b.x), Math.round(b.y), t.x, t.y, 14, null);
+        b.path = p ? p.map(q => ({ x: q.x, y: q.y })) : [{ x: t.x, y: t.y }];
+      }
+      let left = 0.8 * dt;
+      while (left > 0 && b.path.length) {
+        const n = b.path[0], dx = n.x - b.x, dy = n.y - b.y, d = Math.hypot(dx, dy);
+        if (d <= left) { b.x = n.x; b.y = n.y; b.path.shift(); left -= d; }
+        else { b.x += dx / d * left; b.y += dy / d * left; left = 0; }
+      }
+      if (!b.path.length) {
+        b.wp.shift(); b.camp = 1;
+        if (b.wp.length) {
+          b.wait = DAY * 0.9;
+          const w = b.site.water ? ' by the water' : '';
+          if (rnd() < 0.7) G.chron.note(`The settlers of ${b.name} camped to weigh up the country${w}, then moved on.`);
+        } else b.wait = DAY * 0.6;
+      }
+    }
+  }
+  static found(b) {
+    const W = G.world, x = Math.round(b.x), y = Math.round(b.y);
+    for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) {
+      const T = W.tile(xx, yy);
+      if (T && (T.t === 1 || T.t === 2) && Math.hypot(xx - x, yy - y) < 1.7) { T.t = 0; T.amt = 0; T.sap = 0; }
+    }
+    G.bands.splice(G.bands.indexOf(b), 1);
+    const f = G.found(b.name, x, y, null);
+    f.color = b.color;
+    const T = W.tile(x - 2, y + 1);
+    if (T && !T.b && T.t !== 3) { T.t = 0; T.amt = 0; T.sap = 0; G.addBuilding(f, 'farm', x - 2, y + 1, true); }
+    ['farmer', 'farmer', 'woodcutter', 'woodcutter', 'builder'].forEach(j => f.spawn(j));
+    G.recomputeTerritory();
+    const s = b.site, why = s.water ? 'beside the water' : s.rock >= 3 ? 'under the rocks' : s.forest >= 8 ? 'at the edge of the forest' : 'on open ground';
+    G.chron.note(`The settlers of ${f.name} raised their first hall ${why}.`, 'good');
+    G.chron.record(`${f.title} led the first settlers of ${f.name} to a place ${why} and raised a hall there.`, '', f);
+    View.toast(`${f.name} was founded`, 'good');
+    View.float(x, y, 'founded!', f.color);
+  }
+}
+
 class Game {
   constructor() {
     this.v = 4; this.day = 1; this.t = 0; this.speed = 3; this.world = null;
     this.buildings = []; this.cols = []; this.factions = []; this.camps_ = [];
     this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths(); this.trade = new Trade();
-    this.nid = 1; this.evCd = 4; this.records = {}; this.eraFirst = {}; this.over = false; this.startN = 3;
+    this.bands = []; this.nid = 1; this.evCd = 4; this.records = {}; this.eraFirst = {}; this.over = false; this.startN = 3;
     this._b = null; this._bid = null; this._c = null; this._f = null; this._own = null;
   }
   get year() { return Math.floor((this.day - 1) / YEAR) + 1; }
@@ -3453,15 +3535,17 @@ class Game {
         }
       }
     }
+    // no villages yet: bands of five settlers land in the vale and go looking for a place to raise one
+    this.bands = [];
+    const used = new Set();
     sites.forEach((p, i) => {
-      const f = this.found(i === 0 ? 'Ember Vale' : null, p.x, p.y, null);
-      const fx = p.x - 2, fy = p.y + 1, T = W.tile(fx, fy);
-      if (T && !T.b) { T.t = 0; T.amt = 0; this.addBuilding(f, 'farm', fx, fy, true); }
-      ['farmer', 'farmer', 'woodcutter', 'woodcutter', 'builder'].forEach(j => f.spawn(j));
+      const name = i === 0 ? 'Ember Vale' : pick(FACTION_NAMES.filter(x => !used.has(x)));
+      used.add(name);
+      const b = new Band({ id: this.nid++, name, color: COLORS[i % COLORS.length], x: p.x, y: p.y, start: { x: p.x, y: p.y }, n: 5 });
+      Band.plan(b, this.bands);
+      this.bands.push(b);
     });
-    this.recomputeTerritory();
-    this.chron.note(n === 1 ? 'Five settlers make camp in the vale.' : `${n} bands of settlers make camp in the vale, each unaware of what the others intend.`);
-    for (const f of this.factions) this.chron.record(`${f.title} led the first settlers of ${f.name} into the vale.`, '', f);
+    this.chron.note(n === 1 ? 'Five settlers land in the vale and set out to find a place to live.' : `${n} bands of settlers land in the vale and set out to find a place to live, each unaware of what the others intend.`);
   }
   pickStarts(n) {
     const W = this.world, ok = [];
@@ -3627,13 +3711,14 @@ class Game {
       const big = this.alive().sort((a, b) => b.pop - a.pop)[0];
       this.growSide(this.nearestSide(big.cx, big.cy));
     }
-    if (!this.alive().length) View.gameOver();
+    if (!this.alive().length && !this.bands.length) View.gameOver();
     if (this.day % 4 === 0 && !Away.active) save();   // a big world is ~0.5 MB of JSON: don't write it every day
   }
   step(dt) {
     this.t += dt; this.tick = (this.tick || 0) + 1;
     for (const c of this.cols.slice()) c.update(dt);
     this.trade.step(dt);
+    if (this.bands.length) Band.step(dt);
     Smuggle.step(dt);
     for (const f of this.alive()) {
       f.aiT += dt;
@@ -3654,7 +3739,7 @@ class Game {
   // ---------- saving and loading ----------
   toJSON() {
     return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, market: this.market, lastWonder: this.lastWonder, eraFirst: this.eraFirst, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+      camps: this.camps_, bands: this.bands, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, market: this.market, lastWonder: this.lastWonder, eraFirst: this.eraFirst, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; Smuggle.list = []; g.setup(n); g.history = new History(null, g.world.seed); g.history.capture(); return g; }
   static load(d) {
@@ -3670,6 +3755,7 @@ class Game {
     g.cols = d.cols.map(c => new Colonist(c));
     g.factions = d.factions.map(f => new Settlement(f));
     g.camps_ = d.camps.map(c => new Camp(c));
+    g.bands = (d.bands || []).map(b => new Band(b));
     g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths); g.trade = new Trade(d.trade); g.market = d.market || null;
     g.relink();
     return g;
@@ -4294,9 +4380,11 @@ class Renderer {
     else if (z && z.kind === 'f') { const f = G.F(z.id); if (f && !f.gone) b = Renderer.box(f.buildings, 2); else UI.zoom = null; }
     else if (z && z.kind === 'c') { const c = G.camps_.find(x => x.id === z.id); if (c && !c.gone) b = { x0: c.x - 4, y0: c.y - 4, x1: c.x + 5, y1: c.y + 5 }; else UI.zoom = null; }
     // the whole world means everywhere people live, not every empty mile the scouts ever mapped
-    if (!b && UI.view === 'all') { b = Renderer.box(G.buildings.concat(G.camps()), 8) || { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
+    if (!b && UI.view === 'all') { b = Renderer.box(G.buildings.concat(G.camps(), G.bands), 8) || { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
+    // while settlers are still looking for land, the camera follows one band at a time, about six seconds each
+    if (!b && G.bands.length) { const bd = G.bands[Math.floor(performance.now() / 6000) % G.bands.length]; b = Renderer.box([bd], 6); }
     if (!b) {
-      const all = Renderer.box(G.buildings.concat(G.camps()), 3);
+      const all = Renderer.box(G.buildings.concat(G.camps(), G.bands), 3);
       if (all && all.x1 - all.x0 <= 56 && all.y1 - all.y0 <= 70) b = all;
       else {
         const f = UI.focusFaction();
@@ -4362,10 +4450,39 @@ class Renderer {
       }
     }
   }
+  // bands of settlers: a little party with a banner and a handcart; when it camps there are tents and a fire
+  drawBands(ctx, inView, now, rad, m) {
+    for (const b of G.bands) {
+      if (!inView(b)) continue;
+      const x = b.x + 0.5, y = b.y + 0.5, camped = b.wait > 0 && b.camp;
+      if (camped) {
+        ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(x - 0.7, y + 0.28, 1.4, 0.1);
+        for (const [dx, c] of [[-0.45, '#d9cfb4'], [0.3, '#c8b890']]) { ctx.fillStyle = c; tri(ctx, x + dx - 0.3, y + 0.3, x + dx, y - 0.22, x + dx + 0.3, y + 0.3); ctx.fillStyle = '#3a2a1a'; tri(ctx, x + dx - 0.08, y + 0.3, x + dx, y + 0.02, x + dx + 0.08, y + 0.3); }
+        const fl = 0.07 + Math.sin(now / 90 + b.id) * 0.02;
+        ctx.fillStyle = '#f0a23a'; ctx.beginPath(); ctx.arc(x - 0.05, y + 0.3, fl + 0.05, 0, 7); ctx.fill();
+        ctx.fillStyle = '#ffe08a'; ctx.beginPath(); ctx.arc(x - 0.05, y + 0.28, fl, 0, 7); ctx.fill();
+      }
+      // the banner
+      ctx.strokeStyle = '#3a2618'; ctx.lineWidth = rad * 0.3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 0.9 * m); ctx.stroke();
+      ctx.fillStyle = b.color; ctx.fillRect(x + 0.02, y - 0.9 * m, 0.42 * m, 0.26 * m);
+      ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 0.03 * m; ctx.strokeRect(x + 0.02, y - 0.9 * m, 0.42 * m, 0.26 * m);
+      // the cart
+      if (!camped) { ctx.fillStyle = '#6e4a2a'; ctx.fillRect(x - 0.7, y + 0.08, 0.5, 0.26); ctx.fillStyle = '#d9c38c'; ctx.fillRect(x - 0.66, y - 0.06, 0.42, 0.18); ctx.fillStyle = '#2b1d12'; ctx.beginPath(); ctx.arc(x - 0.6, y + 0.36, 0.07, 0, 7); ctx.arc(x - 0.3, y + 0.36, 0.07, 0, 7); ctx.fill(); }
+      ctx.strokeStyle = '#1f1a14'; ctx.lineWidth = rad * 0.35; ctx.fillStyle = b.color;
+      ctx.beginPath();
+      for (let i = 0; i < b.n; i++) {
+        const a = i * 2.4 + 0.5, r = 0.28 + (i % 3) * 0.1, bob = camped ? 0 : Math.sin(now / 140 + i * 1.7) * 0.035;
+        const px = x + 0.1 + Math.cos(a) * r, py = y + 0.12 + Math.sin(a) * r * 0.6 + bob;
+        ctx.moveTo(px + rad, py); ctx.arc(px, py, rad, 0, 7);
+      }
+      ctx.fill(); ctx.stroke();
+    }
+  }
   drawLabels() {
     const ctx = this.ctx, cam = this.cam, kc = this.cv.width / cam.w / this.dpr, cw = this.cv.width / this.dpr, chh = this.cv.height / this.dpr;
     const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, ring: f.faith ? (G.faiths.get(f.faith) || {}).color : '', sel: f.id === UI.sel }; })
-      .concat(G.camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })));
+      .concat(G.camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })))
+      .concat(G.bands.map(b => ({ x: b.x, y: b.y, text: `${b.name} · ${b.n} settlers`, col: '#fff6d8', dot: b.color })));
     ctx.font = `700 ${kc > 20 ? 12 : 10.5}px Figtree, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const it of items) {
       let sx = (it.x + 0.5 - cam.x) * kc, sy = (it.y - 0.95 - cam.y) * kc;
@@ -4402,6 +4519,7 @@ class Renderer {
     for (const c of G.camps()) if (inView(c)) this.drawCamp(c, rdt);
     this.drawRoads(ctx, k, dpr, inView);
     this.drawFairs(ctx, inView, now);
+    this.drawBands(ctx, inView, now, Math.max(0.14, 2.4 * dpr / k) * (k / dpr < 16 ? 1.5 : 1), clamp(14 / (k / dpr), 1, 2.2));
     const rad = Math.max(0.14, 2.4 * dpr / k), groups = new Map(), loads = [], carts = [], pickets = [];
     let picked = null;
     for (const c of G.cols) {
@@ -4615,6 +4733,8 @@ class Interface {
         : c.st === 'fetch' ? 'fetching a cartload from the storehouse' : c.st === 'goWork' ? (c.load ? `carting ${Object.entries(c.load).map(([k, n]) => n + ' ' + k).join(' and ')} to work` : 'heading to work') : c.st === 'goStore' ? `hauling ${c.carry ? c.carry.n + ' ' + c.carry.r : 'goods'}` : c.st === 'wander' ? 'strolling' : 'resting';
       return `<b>${c.name}</b> of ${f.name} · ${JOBS[c.job].label.slice(0, -1)} · ${st}${c.hun ? ` · hungry ${c.hun} day${c.hun > 1 ? 's' : ''}` : ''}`;
     }
+    const bd = G.bands.find(b => Math.hypot(b.x - sel.x - 0.5, b.y - sel.y - 0.5) < 1.6);
+    if (bd) return `<b>${bd.name}</b> · ${bd.n} settlers ${bd.wait > 0 && bd.camp ? 'camped, weighing up the country' : 'walking out to find a place for their first village'}`;
     const T = W.tile(sel.x, sel.y);
     if (!T) return 'Beyond the edge of the known world.';
     const owner = T.own ? G.F(T.own) : null, land = owner ? ` · land of ${owner.name}` : ' · unclaimed wilds';
@@ -4714,7 +4834,7 @@ class Interface {
   refresh() {
     const f = this.selected(), se = G.season, W = G.world;
     $('clock').textContent = `Year ${G.year} · ${SEASONS[se]} · Day ${G.dayOfSeason} of ${SEASON_DAYS}`;
-    if (!f) return;
+    if (!f) { if (G.bands.length) { $('clock').textContent += ` · ${G.bands.length} band${G.bands.length > 1 ? 's' : ''} of settlers looking for land`; this.setHtml('agename', 'The vale · <span>Settlers</span>'); } return; }
     const pop = f.pop, c = f.cap;
     this.setHtml('agename', `${f.name} · <span>${AGES[f.age].name}</span>`);
     $('popdot').style.background = f.color;
