@@ -68,11 +68,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .agenote { font-size: 0.8rem; color: var(--muted); margin-top: 5px; }
 .agenote b { color: var(--ink); }
 
-.stores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.store { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 8px; min-width: 0; }
+.stores { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.store { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 6px; min-width: 0; }
 .store .k { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); display: flex; align-items: center; gap: 5px; }
 .store .k i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-.store .v { font-family: var(--f-mono); font-size: 1rem; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.store .v { font-family: var(--f-mono); font-size: 0.95rem; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .store .v small { color: var(--muted); font-size: 0.7rem; }
 .store .n { font-size: 0.68rem; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .store.low .v, .store.low .n { color: var(--bad); }
@@ -173,6 +173,15 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .sheet button { padding: 12px 14px; border-radius: 10px; border: 0; background: var(--accent); color: var(--accent-ink); font: 600 0.92rem var(--f-body); cursor: pointer; }
 .rel { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 8px; align-items: center; font-size: 0.82rem; }
 .rel .who { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.econ { display: grid; grid-template-columns: 50px 70px minmax(0, 1fr) minmax(0, 1fr); gap: 4px 8px; font-size: 0.8rem; align-items: baseline; }
+.econ .h { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.econ .num { white-space: nowrap; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.econ .up { color: var(--bad); } .econ .dn { color: var(--good); }
+.econ .tr { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.econnote { font-size: 0.8rem; color: var(--muted); margin: 6px 0 2px; line-height: 1.4; }
+.mkt { display: grid; grid-template-columns: 54px 56px 84px minmax(0, 1fr); gap: 2px 8px; font-size: 0.8rem; align-items: center; }
+.mkt svg { width: 84px; height: 22px; display: block; }
+.mkt .tr { grid-column: 1 / -1; color: var(--muted); font-size: 0.76rem; line-height: 1.3; margin-bottom: 6px; }
 .faith { display: flex; flex-direction: column; gap: 2px; font-size: 0.82rem; }
 .faith .who { display: flex; align-items: center; gap: 6px; font-weight: 700; }
 .faith .who i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
@@ -236,6 +245,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="store" id="st-food"><div class="k"><i style="background:#e3c14b"></i>Food</div><div class="v"></div><div class="n"></div></div>
     <div class="store" id="st-wood"><div class="k"><i style="background:#8b5a2b"></i>Wood</div><div class="v"></div><div class="n"></div></div>
     <div class="store" id="st-stone"><div class="k"><i style="background:#9aa4ad"></i>Stone</div><div class="v"></div><div class="n"></div></div>
+    <div class="store" id="st-gold"><div class="k"><i style="background:#d9a54a;border-radius:50%"></i>Gold</div><div class="v"></div><div class="n"></div></div>
     <div class="store" id="st-pop"><div class="k"><i id="popdot" style="background:#e07b39;border-radius:50%"></i>People</div><div class="v"></div><div class="n"></div></div>
   </div>
 
@@ -266,12 +276,17 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
       <div class="sites" id="realm"></div>
       <div class="selname" id="selname"></div>
       <div class="steward" id="steward"></div>
+      <div class="sub">Economy</div>
+      <div class="econ" id="econ"></div>
+      <div class="econnote" id="econnote"></div>
       <div id="jobs"></div>
       <div class="sub">Under construction</div>
       <div class="sites" id="sites"></div>
       <div class="counts" id="counts"></div>
     </div>
     <div class="pane" id="pane-pol" hidden>
+      <div class="sub">World market · prices are what caravans pay</div>
+      <div class="mkt" id="mkt"></div>
       <div class="sub">Faiths</div>
       <div class="sites" id="faiths"></div>
       <div class="sub">Trade roads</div>
@@ -458,6 +473,12 @@ const STANCE = { ally: 'Allied', neutral: 'At peace', war: 'At war' };
 const NAMES = ['Ada','Bram','Cora','Dain','Edda','Finn','Greta','Hale','Ines','Jory','Kit','Lena','Milo','Nell','Orrin','Pia','Quill','Rhea','Sten','Tova','Ulric','Vera','Wren','Yara','Zane','Ash','Bo','Cass','Dov','Elin','Fern','Gil','Hedy','Ivo','Juno','Lark','Moss','Nico','Oona','Pell','Rook','Sage','Tam','Ula','Wynn','Brin','Corra','Ebb','Hollis','Mara','Alder','Bryn','Calla','Dara','Esme','Fen','Garr','Holt','Isla','Jem','Kael','Liesl','Mira','Noor','Odo','Petra','Rowan','Sol','Thea','Ulla','Vik','Willa','Yves','Zora'];
 const DIRS = { n: 'north', s: 'south', e: 'east', w: 'west' };
 const RES_COLOR = { food: '#f2d25c', wood: '#c98a4b', stone: '#d6dde2' };
+// the economy: each city prices goods by its own supply and demand; caravans carry goods from where they're cheap to where they're dear
+const GOODS = ['food', 'wood', 'stone'];
+const BASE_PRICE = { food: 1, wood: 1.3, stone: 2 };
+// what each finished building costs to keep up, each season
+const UPKEEP = { hut: { wood: 1 }, house: { wood: 1 }, manor: { wood: 1, stone: 1 }, store: { wood: 1 }, dock: { wood: 1 }, quarry: { wood: 1 },
+  tower: { stone: 1 }, barracks: { stone: 2 }, chapel: { stone: 1 }, market: { stone: 2 }, cathedral: { stone: 3 }, castle: { stone: 4 }, palace: { stone: 6 }, wonder: { stone: 8 } };
 
 // ========== small helpers ==========
 const $ = id => document.getElementById(id);
@@ -964,12 +985,13 @@ class Steward {
     const c = f.cap;
     let foodShare = se === 3 ? 0.42 : 0.36;
     if (f.res.food < pop * 3) foodShare += 0.1;
-    if (f.res.food > c * 0.9) foodShare -= 0.2;
+    if (f.res.food > Math.min(c * 0.9, f.want('food') * 2)) foodShare = Math.min(foodShare, se === 3 ? 0.3 : 0.18);
     const want = {};
     want.farmer = Math.min(slots, Math.max(1, Math.ceil(pop * foodShare)));
     const roadWork = f.afford(this.roadCost()) ? Math.min(2, Math.ceil(f.roadPlan.length / 8)) : 0, work = sites + roadWork;
     want.builder = work ? Math.min(Math.ceil(work * 1.6), Math.max(1, Math.ceil(pop * 0.18))) : 0;
-    const stoneHungry = f.res.stone < c * 0.85;
+    // workers go where the town is short, measured against what it wants on hand rather than how much it can store
+    const stoneHungry = f.res.stone < Math.min(c * 0.85, f.want('stone') * 2);
     want.miner = stoneHungry ? Math.max(1, Math.ceil(pop * (f.age >= 2 ? 0.22 : 0.15))) : 0;
     const groves = f.buildings.filter(b => b.built && b.onHome && b.type === 'forester').length * BUILD.forester.slots;
     want.forester = Math.min(groves, Math.max(0, pop - want.farmer - want.builder - want.miner - 2));
@@ -977,7 +999,8 @@ class Steward {
     if (rest < 0) { want.miner = Math.max(0, want.miner + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester; }
     if (rest < 0) { want.builder = Math.max(work ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester; }
     want.woodcutter = Math.max(0, rest);
-    if (f.res.wood >= c * 0.95 && want.woodcutter > 1) { const m = Math.floor(want.woodcutter / 2); want.woodcutter -= m; if (stoneHungry) want.miner += m; else want.farmer += m; }
+    // more of a good than the town wants is only worth what a caravan pays: spare hands help the builders instead
+    if (f.res.wood >= Math.min(c * 0.95, f.want('wood') * 2) && want.woodcutter > 1) { const m = Math.floor(want.woodcutter * 0.7); want.woodcutter -= m; if (stoneHungry) want.miner += m; else if (f.res.food < f.want('food') * 2) want.farmer += m; else want.builder += m; }
     const have = {}; for (const k in JOBS) have[k] = 0;
     for (const o of crew) have[o.job] = (have[o.job] || 0) + 1;
     for (const k in JOBS) {
@@ -1202,7 +1225,6 @@ class Steward {
     // self-sufficiency: a quarry for stone that never runs out, a forester to keep the woods growing
     if (f.age >= 1 && f.res.stone < c * 0.5 && f.anyCount('quarry') < 1 + Math.floor(pop / 45) && !sites.some(b => b.type === 'quarry')) {
       if (tryBuild('quarry', 'Opening a quarry so the stone never runs out.')) return;
-      if (f.age >= 2 && f.res.stone < c * 0.2) { this._anyPit = true; const ok = tryBuild('quarry', 'No rock left on our land: digging a stone pit.'); this._anyPit = false; if (ok) return; }
     }
     if (f.age >= 1 && f.anyCount('forester') < 1 + Math.floor(pop / 40) && !sites.some(b => b.type === 'forester') && (f.res.wood < c * 0.6 || this.trees() < pop) && tryBuild('forester', "Building a forester's hut to replant the woods.")) return;
     // wonders stay rare: one under way in the world at a time, three years apart, at most two per realm
@@ -1343,10 +1365,13 @@ class Steward {
   }
   trade() {
     const f = this.f, c = f.cap;
+    // the town's own market swaps its cheapest spare good for its dearest, at local prices less the traders' cut
     for (let i = 0; i < f.builtCount('market'); i++) {
-      if (f.res.wood > c * 0.7 && f.res.stone < c * 0.9) { f.res.wood -= 10; f.res.stone = Math.min(c, f.res.stone + 6); }
-      if (f.res.food > c * 0.8 && f.res.stone < c * 0.9) { f.res.food -= 10; f.res.stone = Math.min(c, f.res.stone + 5); }
-      if (f.res.food < f.pop * 2 && f.res.stone > 30) { f.res.stone -= 8; f.res.food = Math.min(c, f.res.food + 12); }
+      const ks = GOODS.slice().sort((x, y) => f.price(x) - f.price(y)), lo = ks[0], hi = ks[2];
+      if (f.price(hi) / f.price(lo) < 1.6 || f.res[hi] >= c) break;
+      const q = Math.floor(Math.min(10, f.res[lo] - f.want(lo) * 0.6));
+      if (q < 4) break;
+      f.res[lo] -= q; f.addRes(hi, Math.floor(q * f.price(lo) / f.price(hi) * 0.75)); f._pxDay = -1;
     }
   }
 }
@@ -1360,6 +1385,7 @@ class Settlement {
     if (this.ruler && !(this.ruler instanceof Ruler)) this.ruler = new Ruler(this.ruler);
     if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
     if (!this.roadPlan) this.roadPlan = [];
+    if (this.gold === undefined) { this.gold = 20; this.ledger = { imp: {}, exp: {} }; }   // saves from before the economy
     if (!this.techs) {   // saves from before the tech tree: credit older realms with the early eras
       const n = Math.floor((this.age + 1) / 2);
       this.techs = Object.keys(TECHS).filter(t => TECHS[t].era < n); this.study = null; this.sci = 0;
@@ -1379,7 +1405,7 @@ class Settlement {
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
       stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
       culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40,
-      techs: parent ? parent.techs.slice() : [], study: null, sci: 0, roadPlan: [] });
+      techs: parent ? parent.techs.slice() : [], study: null, sci: 0, roadPlan: [], gold: 20, ledger: { imp: {}, exp: {} } });
     f.ruler = Ruler.crown(f);
     return f;
   }
@@ -1392,7 +1418,32 @@ class Settlement {
   anyCount(type) { let n = 0; for (const b of this.buildings) if (b.type === type) n++; return n; }
   get housing() { return this.buildings.reduce((n, b) => n + b.houses, 0); }
   get futureHousing() { return this.buildings.reduce((n, b) => n + (BUILD[b.type].house || 0), 0); }
-  get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age + this.fx('cap'); }
+  get cap() { return 100 + 60 * this.builtCount('store') + 30 * this.age + this.fx('cap'); }
+  // --- the city's own market ---
+  // what it wants on hand: two seasons of bread, a winter of firewood and its upkeep, and stone for the next landmark
+  want(k) {
+    const pop = this.pop, u = this.upkeep();
+    if (k === 'food') return pop * 4 + 20;
+    if (k === 'wood') return Math.ceil(pop / 4) * SEASON_DAYS + 30 + this.age * 10 + u.wood * 2 + this.fuel() * SEASON_DAYS;
+    return 30 + this.age * 30 + u.stone * 2;
+  }
+  // a good is dear where it's short of what the city wants, cheap where it piles up
+  price(k) {
+    if (this._pxDay !== G.day) { this._pxDay = G.day; this._px = {}; for (const g of GOODS) { const w = this.want(g); this._px[g] = BASE_PRICE[g] * clamp(Math.pow(w / (Math.max(0, this.res[g]) + w * 0.1), 0.8), 0.25, 4); } }
+    return this._px[k];
+  }
+  upkeep() {
+    if (this._upDay !== G.day) {
+      this._upDay = G.day; const u = { wood: 0, stone: 0 };
+      for (const b of this.buildings) { const c = b.built && UPKEEP[b.type]; if (c) for (const k in c) u[k] += c[k]; }
+      this._up = u;
+    }
+    return this._up;
+  }
+  // factories and cities burn fuel every day from the Industrial Era
+  fuel() { return this.era >= 5 ? Math.ceil(this.pop * (this.era >= 6 ? 0.06 : 0.04)) : 0; }
+  get tax() { return this.pop * 0.02 * clamp(this.mood / 60, 0.3, 1.5); }
+  get soldiersPay() { return Math.floor(this.military * 0.1); }
   get drops() {
     if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store') && b.onHome); }
     return this._drops;
@@ -1561,6 +1612,9 @@ class Settlement {
     if (tr && tr.m) { m += tr.m; why.push(tr.why); }
     if (this.age >= 4 && this.highSince) { const dec = Math.min(12, Math.floor((G.day - this.highSince) / YEAR) * 2); if (dec) { m -= dec; why.push('a decadent court'); } }
     if (this.plague) { m -= 12; why.push('plague'); }
+    if (this.decay) { m -= 6; why.push('crumbling buildings'); }
+    if (this.unpaid) { m -= 5; why.push('unpaid soldiers'); }
+    if (this.spent) { m += Math.min(6, 2 + Math.floor(this.spent / Math.max(20, pop))); why.push('a prosperous market'); }
     if (this.hasWonder('library')) { m += 6; why.push('the Great Library'); }
     if (this.hasWonder('arena')) { m += 5; why.push('games in the Arena'); }
     if (this.hasGreat('scholar')) { m += 5; why.push(`the scholar ${this.great.name}`); }
@@ -1586,6 +1640,18 @@ class Settlement {
       const need = Math.ceil(this.pop / 4);
       if (this.res.wood >= need) this.res.wood -= need;
       else { this.res.wood = 0; if (rnd() < 0.35) { this.killN(1); G.chron.note(`Someone froze in the night in ${this.name}.`, 'bad'); } }
+    }
+    const fuel = this.fuel();
+    if (fuel) this.res.wood = Math.max(0, this.res.wood - fuel);
+    this.gold += this.tax;
+    if (G.dayOfSeason === 1) {   // upkeep and the army's pay, each season
+      const u = this.upkeep(); this.decay = false;
+      for (const k in u) { if (this.res[k] >= u[k]) this.res[k] -= u[k]; else { this.res[k] = 0; this.decay = true; } }
+      const pay = this.soldiersPay; this.unpaid = this.gold < pay; this.gold = Math.max(0, this.gold - pay);
+      // a rich town spends: fairs, fine clothes and feasts lift the mood, and the gold is gone
+      this.spent = this.gold > this.pop * 3 + 40 ? Math.floor((this.gold - this.pop * 3 - 40) * 0.3) : 0; this.gold -= this.spent;
+      for (const s of ['imp', 'exp']) for (const k in this.ledger[s]) this.ledger[s][k] *= 0.8;   // the books remember about a year
+      this._pxDay = -1;
     }
     this.steward.trade();
     const r = this.moodTarget();
@@ -1761,7 +1827,11 @@ class Settlement {
     if (G.dayOfSeason === 1) {
       let paid = 0;
       for (const k of ['food', 'wood', 'stone']) { const t = Math.floor(Math.max(0, this.res[k] - 60) * 0.12); if (t) { this.res[k] -= t; L.addRes(k, t); paid += t; } }
-      this.tribute = (this.tribute || 0) + paid;
+      const g = Math.floor(this.gold * 0.1); this.gold -= g; L.gold += g;
+      this.tribute = (this.tribute || 0) + paid + g;
+      // colony and capital trade along the royal road
+      const cap = 10 + this.age * 3;
+      for (const [x, y] of [[this, L], [L, this]]) { const d = Econ.deal(x, y, cap); if (d && y.tc) View.float(y.tc.x, y.tc.y, `+${d.q} ${d.k}`, RES_COLOR[d.k]); }
     }
     if (rnd() < 0.05) { this.steward.planTradeRoad(L, this.royal); L.steward.planTradeRoad(this, this.royal); }
     // loyalty
@@ -1938,7 +2008,7 @@ class Camp {
       G.chron.note(`The ${this.name} attacked ${target.name} and broke against its defenses.`, 'pol');
     } else {
       const lf = Math.floor(target.res.food * 0.25), lw = Math.floor(target.res.wood * 0.25), ls = Math.floor(target.res.stone * 0.15);
-      target.res.food -= lf; target.res.wood -= lw; target.res.stone -= ls; target.grief += 6;
+      target.res.food -= lf; target.res.wood -= lw; target.res.stone -= ls; target.grief += 6; target.gold = Math.floor(target.gold * 0.8);
       const dead = def < str * 0.75 ? target.killN(ri(1, 1 + Math.floor(str / 15))) : 0;
       G.chron.note(`The ${this.name} raided ${target.name}${dead ? `, killing ${dead}` : ''}, and carried off ${lf} food and ${lw} wood.`, 'bad');
       View.toast(`The ${this.name} raided ${target.name}`, 'bad');
@@ -2124,6 +2194,7 @@ class Diplomacy {
     const t = b.tc;
     if (att > dd) {
       for (const k of ['food', 'wood', 'stone']) { const n = Math.floor(b.res[k] * 0.15); b.res[k] -= n; a.res[k] = Math.min(a.cap, a.res[k] + n); }
+      { const g = Math.floor(b.gold * 0.2); b.gold -= g; a.gold += g; }
       const dead = b.killN(ri(1, 2 + Math.floor(ma / 40)));
       b.grief += 4; this.rel[key(a.id, b.id)] -= 3;
       if (t) View.float(t.x, t.y, '⚔', '#ff6a5a');
@@ -2139,6 +2210,7 @@ class Diplomacy {
     for (const c of b.people) { c.f = a.id; c.setJob(c.job); }
     for (const bl of b.buildings) bl.f = a.id;
     for (const k of ['food', 'wood', 'stone']) a.res[k] = Math.min(a.cap, a.res[k] + Math.floor(b.res[k] / 2));
+    a.gold += Math.floor(b.gold / 2);
     G.dirtyB(); G.dirtyC();
     b.gone = true;
     a.learn(b.techs || [], `took the knowledge of ${b.name}:`);
@@ -2308,10 +2380,11 @@ class Trade {
       const from = G.F(c.from), to = G.F(c.to);
       if (!from || !to || from.gone || to.gone) continue;
       c.r.n = (c.r.n || 0) + 1;
-      // each delivery creates a little wealth at both ends: the goods the receiver is shortest of
-      for (const f of [to, from]) { const k = ['food', 'wood', 'stone'].sort((x, y) => f.res[x] - f.res[y])[0]; f.addRes(k, Math.round((8 + f.age * 2) * (f.hasWonder('colossus') ? 2 : 1) * (f.hasGreat('merchant') ? 1.5 : 1) * (1 + f.fx('goods')))); }
-      G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + 0.5, -100, 100);
-      if (to.tc) View.float(to.tc.x, to.tc.y, '⚖', '#f0d9a0');
+      // the caravan carries whatever sells for most at the far end compared with home; an empty run still keeps friends
+      const cap = Math.round((8 + from.age * 3) * (from.hasWonder('colossus') ? 2 : 1) * (from.hasGreat('merchant') ? 1.5 : 1) * (1 + from.fx('goods')));
+      const d = Econ.deal(from, to, cap);
+      G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + (d ? 0.6 : 0.2), -100, 100);
+      if (d && to.tc) View.float(to.tc.x, to.tc.y, `+${d.q} ${d.k}`, RES_COLOR[d.k]);
     }
   }
   // where a caravan is on its road, in tile coordinates
@@ -2321,6 +2394,48 @@ class Trade {
   }
   toJSON() { return { routes: this.routes.map(({ _p, _s, ...r }) => r), nid: this.nid }; }
 }
+
+const Econ = {
+  // one load of goods from a to b: the good that sells for most at b compared with a, out of what a can spare.
+  // b pays in gold at the price halfway between the two cities; what its gold can't cover it pays in its own cheapest spare good.
+  deal(a, b, cap) {
+    let k = null, best = 1.15;
+    for (const g of GOODS) {
+      if (a.res[g] - a.want(g) * 0.6 < 4) continue;
+      const r = b.price(g) / a.price(g);
+      if (r > best) { best = r; k = g; }
+    }
+    if (!k) return null;
+    const p = (a.price(k) + b.price(k)) / 2;
+    let q = Math.floor(Math.min(a.res[k] - a.want(k) * 0.6, cap, b.cap - b.res[k]));
+    if (q < 2) return null;
+    let gold = Math.min(b.gold, q * p), bk = null, bq = 0;
+    if (q * p - gold > 0.5) {
+      bk = GOODS.filter(g => g !== k).sort((x, y) => b.price(x) - b.price(y))[0];
+      const bp = (a.price(bk) + b.price(bk)) / 2;
+      bq = clamp(Math.floor((q * p - gold) / bp), 0, Math.max(0, Math.floor(b.res[bk] - b.want(bk) * 0.5)));
+      if (gold + bq * bp < q * p * 0.9) q = Math.floor((gold + bq * bp) / p);   // can't pay for it all: a smaller load
+      if (q < 2) return null;
+      gold = Math.min(gold, q * p);
+    }
+    a.res[k] -= q; b.addRes(k, q); b.gold -= gold; a.gold += gold;
+    if (bq) { b.res[bk] -= bq; a.addRes(bk, bq); a.ledger.imp[bk] = (a.ledger.imp[bk] || 0) + bq; b.ledger.exp[bk] = (b.ledger.exp[bk] || 0) + bq; }
+    a.ledger.exp[k] = (a.ledger.exp[k] || 0) + q; b.ledger.imp[k] = (b.ledger.imp[k] || 0) + q;
+    a._pxDay = b._pxDay = -1;
+    // the world price is only what goods actually change hands for
+    const M = G.market || (G.market = { px: {}, vol: {}, hist: [] });
+    M.px[k] = M.px[k] === undefined ? p : M.px[k] * 0.9 + p * 0.1;
+    M.vol[k] = (M.vol[k] || 0) + q;
+    return { k, q, p, gold };
+  },
+  // once a season the world's books are closed: a price history for the chart, and last year's trade volume fades
+  season() {
+    const M = G.market || (G.market = { px: {}, vol: {}, hist: [] });
+    M.hist.push({ d: G.day, px: { ...M.px } });
+    if (M.hist.length > 24) M.hist.shift();
+    for (const k in M.vol) M.vol[k] *= 0.75;
+  },
+};
 
 const Plague = {
   start(f, from) {
@@ -2652,6 +2767,7 @@ class Game {
     const total = this.cols.length;
     for (const c of this.camps()) c.daily(total);
     if (--this.evCd <= 0) { this.evCd = ri(2, 5); this.fireEvent(); }
+    if (this.dayOfSeason === 1) Econ.season();
     if (this.dayOfSeason === 1) this.chron.note({ 0: 'Spring. The fields are worked again.', 1: 'Summer. Long days and steady harvests.', 2: 'Autumn. Richer harvests; the stores fill.', 3: 'Winter. Fields yield little and every hearth needs wood.' }[se]);
     // each new year, if there is no room left for anyone to settle, the frontier moves outward
     if (this.day % YEAR === 1 && this.year >= 2 && this.alive().length && !this.scanSite(10, 8)) {
@@ -2684,7 +2800,7 @@ class Game {
   // ---------- saving and loading ----------
   toJSON() {
     return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, lastWonder: this.lastWonder, eraFirst: this.eraFirst, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, market: this.market, lastWonder: this.lastWonder, eraFirst: this.eraFirst, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; g.setup(n); g.history = new History(null, g.world.seed); g.history.capture(); return g; }
   static load(d) {
@@ -2700,7 +2816,7 @@ class Game {
     g.cols = d.cols.map(c => new Colonist(c));
     g.factions = d.factions.map(f => new Settlement(f));
     g.camps_ = d.camps.map(c => new Camp(c));
-    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths); g.trade = new Trade(d.trade);
+    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths); g.trade = new Trade(d.trade); g.market = d.market || null;
     g.relink();
     return g;
   }
@@ -3378,6 +3494,32 @@ class Interface {
     if (this.overTimer > 0 && (this.overTimer -= rdt) <= 0) restart();
   }
   // ---------- what the tapped thing is ----------
+  // the selected city's market: local price against the world's, stock against what it wants, and what it trades
+  econ(f) {
+    const M = G.market, L = f.ledger || { imp: {}, exp: {} };
+    const cell = k => {
+      const p = f.price(k), w = M && M.px[k], cls = w ? (p > w * 1.15 ? 'up' : p < w * 0.87 ? 'dn' : '') : '';
+      const ex = Math.round(L.exp[k] || 0), im = Math.round(L.imp[k] || 0);
+      return `<span>${upper(k)}</span><span class="num ${cls}">¤${p.toFixed(2)}${cls === 'up' ? '▲' : cls === 'dn' ? '▼' : ''}</span><span class="num">${Math.floor(f.res[k])} / ${f.want(k)}</span><span class="tr">${ex > im ? `sells ${ex}` : im ? `buys ${im}` : 'home-grown'}</span>`;
+    };
+    this.setHtml('econ', `<span class="h">Good</span><span class="h">Price</span><span class="h">Stock / wants</span><span class="h">Last year</span>` + GOODS.map(cell).join(''));
+    const u = f.upkeep();
+    this.setHtml('econnote', `Prices are in gold: ▲ dearer than the world price, ▼ cheaper. Treasury ${Math.floor(f.gold)} gold. Homes for ${f.housing}. Each season: ${u.wood} wood and ${u.stone} stone of upkeep, ${f.soldiersPay} gold for soldiers${f.fuel() ? `, ${f.fuel()} wood a day for fuel` : ''}. ${f.spent ? `Spent ${f.spent} gold on fairs and feasts last season. ` : ''}Storage ${f.cap}.${f.decay ? ' Buildings are crumbling for want of upkeep.' : ''}${f.unpaid ? ' The soldiers went unpaid.' : ''}`);
+  }
+  // world prices exist only where goods change hands: a line of the last six years for each good, and who sells cheapest and buys dearest
+  market() {
+    const M = G.market, fs = G.alive().filter(o => o.pop);
+    if (!M || !Object.keys(M.px).length) { this.setHtml('mkt', '<div class="steward" style="grid-column:1/-1">No goods have changed hands yet. World prices appear with the first caravan.</div>'); return; }
+    this.setHtml('mkt', GOODS.map(k => {
+      const pts = M.hist.map(h => h.px[k]).filter(v => v !== undefined), now = M.px[k];
+      if (now === undefined) return `<span>${upper(k)}</span><span class="num">–</span><span></span><span class="tr">not traded yet</span>`;
+      const all = pts.concat(now), lo = Math.min(...all), hi = Math.max(...all), sp = Math.max(0.01, hi - lo);
+      const line = all.map((v, i) => `${(i / Math.max(1, all.length - 1) * 82 + 1).toFixed(1)},${(20 - (v - lo) / sp * 18).toFixed(1)}`).join(' ');
+      const by = fs.slice().sort((a, b) => a.price(k) - b.price(k)), cheap = by[0], dear = by[by.length - 1];
+      return `<span>${upper(k)}</span><span class="num">¤${now.toFixed(2)}</span><svg viewBox="0 0 84 22" aria-hidden="true"><polyline points="${line}" fill="none" stroke="${RES_COLOR[k] === '#d6dde2' ? '#8f9aa3' : RES_COLOR[k]}" stroke-width="1.6"/></svg>`
+        + `<span class="tr">${Math.round(M.vol[k] || 0)} traded this year · cheapest in ${cheap.name} (¤${cheap.price(k).toFixed(1)}), dearest in ${dear.name} (¤${dear.price(k).toFixed(1)})</span>`;
+    }).join(''));
+  }
   describe(sel) {
     const W = G.world;
     if (sel.c) {
@@ -3485,10 +3627,12 @@ class Interface {
       const has = f.builtCount(next.mark), building = f.anyCount(next.mark) && !has;
       this.setHtml('agenote', `Next: <b>${next.name}</b> at ${next.pop} people (${pop} now) and a ${BUILD[next.mark].name.toLowerCase()}${has ? ' ✓' : building ? ' (being built)' : ''}.${next.name === 'Town' ? ' Towns draw borders.' : ''}`);
     } else this.setHtml('agenote', `<b>${f.name} is an empire.</b> Its steward keeps it fed, housed and armed.`);
-    this.setStore('st-food', `${Math.floor(f.res.food)}`, `−${pop}/day`, pop && f.res.food < pop * 3);
-    this.setStore('st-wood', `${Math.floor(f.res.wood)}`, se === 3 ? `−${Math.ceil(pop / 4)}/day` : `max ${c}`, se === 3 && f.res.wood < Math.ceil(pop / 4) * 2);
-    this.setStore('st-stone', `${Math.floor(f.res.stone)}`, `max ${c}`, false);
-    this.setStore('st-pop', `${pop}<small>/${f.housing}</small>`, `mood ${Math.round(f.mood)}`, f.mood < 40);
+    this.setStore('st-food', `${Math.floor(f.res.food)}`, `−${pop}/d`, pop && f.res.food < pop * 3);
+    const px = k => `¤${f.price(k).toFixed(1)}`;
+    this.setStore('st-wood', `${Math.floor(f.res.wood)}`, se === 3 ? `−${Math.ceil(pop / 4) + f.fuel()}/day` : px('wood'), se === 3 && f.res.wood < Math.ceil(pop / 4) * 2);
+    this.setStore('st-stone', `${Math.floor(f.res.stone)}`, px('stone'), false);
+    this.setStore('st-gold', `${Math.floor(f.gold)}`, `+${f.tax.toFixed(1)}/day`, f.unpaid);
+    this.setStore('st-pop', `${pop}`, `mood ${Math.round(f.mood)}`, f.mood < 40);
     this.setHtml('showall', this.zoom || this.view === 'all' ? 'Follow the action' : 'Whole world');
     if (this.tab === 'realm') {
       const on = (k, id) => this.zoom && this.zoom.kind === k && this.zoom.id === id ? 'true' : 'false';
@@ -3504,6 +3648,7 @@ class Interface {
       const rels = G.alive().filter(o => o !== f).map(o => `${STANCE[G.dip.stanceOf(f, o)].toLowerCase()} with ${o.name}`).join('; ');
       const reign = Math.floor(f.ruler.years);
       $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}${f.great ? `<br><b>Great ${GREATS[f.great.kind].what}:</b> ${f.great.name} ${f.great.ep}, bringing ${GREATS[f.great.kind].does}.` : ''}${f.buildings.some(b => b.type === 'wonder' && b.built) ? `<br><b>Wonders:</b> ${f.buildings.filter(b => b.type === 'wonder' && b.built).map(b => upper(WONDERS[b.wk].name)).join(', ')}.` : ''}${f.liege && G.F(f.liege) ? `<br><b>Colony of ${G.F(f.liege).name}:</b> loyalty ${Math.round(f.loyal)}${f.loyal < 45 ? ', talk of independence' : ''}; ${f.tribute || 0} goods paid in tribute so far.` : ''}${f.colonies.length ? `<br><b>Colonies:</b> ${f.colonies.map(c => `${c.name} (loyalty ${Math.round(c.loyal)})`).join(', ')}.` : ''}<br><b>Era:</b> ${ERAS[f.era]}${f.study ? `, studying ${TECHS[f.study].name}` : ''}.<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
+      this.econ(f);
       for (const k of Object.keys(JOBS)) {
         const n = f.people.filter(o => o.job === k).length;
         $('n-' + k).textContent = n;
@@ -3540,6 +3685,7 @@ class Interface {
         const col = st === 'war' ? 'var(--bad)' : st === 'ally' ? '#3d7fd1' : r >= 0 ? 'var(--good)' : 'var(--accent)';
         rows.push(`<div class="rel"><span class="who"><i style="background:${a.color}"></i>${a.name} · <i style="background:${b.color}"></i>${b.name}</span><span class="relbar"><i style="left:${left}%;width:${width}%;background:${col}"></i></span><span class="chip ${st === 'war' ? 'war' : st === 'ally' ? 'ally' : 'peace'}">${a.liege === b.id || b.liege === a.id ? 'Vassal' : STANCE[st]}${G.dip.isOpen(a, b) && st !== 'war' && a.liege !== b.id && b.liege !== a.id ? ' · open' : ''}</span></div>`);
       }
+      this.market();
       this.setHtml('rels', rows.length ? rows.join('') : '<div class="steward">Only one settlement stands. Relations begin when a second one is founded.</div>');
       const faiths = G.faiths.list.filter(x => !x.gone).map(x => {
         const ms = fs.filter(o => o.faith === x.id), h = G.F(x.holy);
