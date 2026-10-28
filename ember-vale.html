@@ -118,7 +118,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .daily[open] summary { margin-bottom: 6px; }
 
 .drawer { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--line); }
 .tabs button { background: transparent; border: 0; color: var(--muted); font: 600 0.9rem var(--f-body); padding: 12px 6px; cursor: pointer; }
 .tabs button[aria-selected="true"] { color: var(--ink); box-shadow: inset 0 -3px 0 var(--accent); }
 .pane { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -197,6 +197,20 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
 .sheet button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 .selname { font-family: var(--f-display); font-size: 1.15rem; display: flex; align-items: center; gap: 8px; }
 .selname i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.tree { display: flex; flex-direction: column; gap: 12px; }
+.era h3 { font: 400 1rem var(--f-display); margin: 0 0 6px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.era h3 small { font: 600 0.72rem var(--f-body); color: var(--muted); text-align: right; }
+.era h3 small.here { color: var(--accent); }
+.era .ts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tech { font-size: 0.78rem; border: 1px dashed var(--line); border-radius: 8px; padding: 6px 8px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tech b { font-weight: 700; }
+.tech span { font-size: 0.7rem; line-height: 1.3; }
+.tech.known { border: 1px solid var(--good); color: var(--ink); }
+.tech.now { border: 1px solid var(--accent); color: var(--ink); }
+.tech .dots { display: flex; flex-wrap: wrap; gap: 3px; min-height: 7px; }
+.tech .dots i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.tbar { height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.tbar i { display: block; height: 100%; background: var(--accent); }
 </style>
 </head>
 <body>
@@ -245,6 +259,7 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-realm" aria-selected="true">Realm</button>
       <button role="tab" id="tab-pol" aria-selected="false">Politics</button>
+      <button role="tab" id="tab-tech" aria-selected="false">Tech</button>
       <button role="tab" id="tab-log" aria-selected="false">Chronicle</button>
     </div>
     <div class="pane" id="pane-realm">
@@ -260,10 +275,17 @@ canvas { display: block; width: 100%; touch-action: manipulation; cursor: pointe
     <div class="pane" id="pane-pol" hidden>
       <div class="sub">Faiths</div>
       <div class="sites" id="faiths"></div>
+      <div class="sub">Trade roads</div>
+      <div class="sites" id="roads"></div>
       <div class="sub">Relations</div>
       <div class="sites" id="rels"></div>
       <div class="sub">Recent politics</div>
       <ul class="log" id="pollog"></ul>
+    </div>
+    <div class="pane" id="pane-tech" hidden>
+      <div class="sub">Every realm studies on its own · tap one to see its tree</div>
+      <div class="sites" id="techrealms"></div>
+      <div class="tree" id="tree"></div>
     </div>
     <div class="pane" id="pane-log" hidden>
       <div class="miles" id="miles"></div>
@@ -350,7 +372,73 @@ const BUILD = {
   cathedral: { name: 'Cathedral',  cost: { wood: 60, stone: 90 },    time: 30, mark: 3 },
   castle:    { name: 'Castle',     cost: { wood: 80, stone: 150 },   time: 40, def: 25, mark: 4 },
   palace:    { name: 'Palace',     cost: { wood: 120, stone: 220 },  time: 60, mark: 5 },
+  wonder:    { name: 'Wonder',     cost: { wood: 260, stone: 420 },  time: 140 },
 };
+// one of each in the whole world, for kingdoms and empires with stone to spare
+const WONDERS = {
+  library:  { name: 'the Great Library',    does: 'scholars lift the mood',               col: '#d8c8a0' },
+  colossus: { name: 'the Colossus',          does: 'trade caravans carry twice the goods', col: '#d9a54a' },
+  gardens:  { name: 'the Hanging Gardens',   does: 'farms yield more',                     col: '#6fbf73' },
+  wall:     { name: 'the Great Wall',        does: 'a far stronger defence',               col: '#a8a39a' },
+  temple:   { name: 'the Sky Temple',        does: 'zeal and missionaries',                col: '#e9e2ff' },
+  arena:    { name: 'the Grand Arena',       does: 'games that lift the mood',             col: '#c97b5a' },
+};
+// great people: one at a time per realm, rare, and each leaves a mark
+const GREATS = {
+  general:   { what: 'general',   eps: ['the Lion', 'the Hammer', 'Ironside', 'the Unbroken'], does: 'a stronger army' },
+  scholar:   { what: 'scholar',   eps: ['the Learned', 'the Lamp', 'Starwise', 'the Sage'], does: 'a happier people' },
+  saint:     { what: 'saint',     eps: ['the Blessed', 'the Pure', 'Lightbearer', 'the Martyr'], does: 'zeal and converts' },
+  merchant:  { what: 'merchant',  eps: ['Goldhand', 'the Rich', 'Silvertongue', 'the Broker'], does: 'richer caravans' },
+  architect: { what: 'architect', eps: ['the Mason', 'Stonewise', 'the Builder of Towers', 'Plumbline'], does: 'faster building' },
+};
+// the tech tree: seven eras, four discoveries each. A realm can study an era's techs once it knows two from the era before.
+const ERAS = ['Tribal Era', 'Bronze Age', 'Iron Age', 'Medieval Era', 'Renaissance', 'Industrial Era', 'Modern Era'];
+const TECHS = {
+  stone:     { era: 0, name: 'Stone Tools',       fx: { work: 0.1 },             does: 'quicker woodcutting and quarrying' },
+  pottery:   { era: 0, name: 'Pottery',           fx: { cap: 30 },               does: 'bigger stores' },
+  herding:   { era: 0, name: 'Herding',           fx: { farm: 1 },               does: 'more food from each field' },
+  lore:      { era: 0, name: 'Oral Tradition',    fx: { sci: 0.15 },             does: 'faster learning' },
+  agri:      { era: 1, name: 'Agriculture',       fx: { farm: 1 },               does: 'richer harvests' },
+  bronze:    { era: 1, name: 'Bronze Working',    fx: { mil: 0.15 },             does: 'a stronger army' },
+  wheel:     { era: 1, name: 'The Wheel',         fx: { cart: 0.3 },             does: 'faster caravans' },
+  writing:   { era: 1, name: 'Writing',           fx: { sci: 0.2 },              does: 'faster learning' },
+  iron:      { era: 2, name: 'Iron Working',      fx: { mil: 0.2, work: 0.1 },   does: 'a stronger army and better tools' },
+  masonry:   { era: 2, name: 'Masonry',           fx: { build: 0.2 },            does: 'faster building' },
+  coin:      { era: 2, name: 'Currency',          fx: { goods: 0.3 },            does: 'richer trade' },
+  philo:     { era: 2, name: 'Philosophy',        fx: { mood: 3, sci: 0.15 },    does: 'a calmer people and faster learning' },
+  feudal:    { era: 3, name: 'Feudalism',         fx: { mil: 0.25 },             does: 'a stronger army' },
+  rotation:  { era: 3, name: 'Crop Rotation',     fx: { farm: 1 },               does: 'richer harvests' },
+  engineer:  { era: 3, name: 'Engineering',       fx: { build: 0.25 },           does: 'faster building and wonders' },
+  theology:  { era: 3, name: 'Theology',          fx: { mood: 3 },               does: 'a more content people' },
+  printing:  { era: 4, name: 'Printing Press',    fx: { sci: 0.3 },              does: 'faster learning' },
+  gunpowder: { era: 4, name: 'Gunpowder',         fx: { mil: 0.4 },              does: 'a far stronger army' },
+  banking:   { era: 4, name: 'Banking',           fx: { cap: 100, goods: 0.3 },  does: 'bigger stores and richer trade' },
+  navigation:{ era: 4, name: 'Navigation',        fx: { fish: 1, cart: 0.2 },    does: 'better fishing and faster caravans' },
+  steam:     { era: 5, name: 'Steam Power',       fx: { work: 0.25, build: 0.25 }, does: 'machines that speed up work and building' },
+  rail:      { era: 5, name: 'Railways',          fx: { cart: 0.8 },             does: 'trains on the trade roads' },
+  medicine:  { era: 5, name: 'Medicine',          fx: { health: 0.5, growth: 0.3 }, does: 'milder plagues and more births' },
+  factory:   { era: 5, name: 'Factories',         fx: { cap: 150, goods: 0.4 },  does: 'bigger stores and richer trade' },
+  electric:  { era: 6, name: 'Electricity',       fx: { mood: 4, sci: 0.3 },     does: 'lit streets and faster learning' },
+  auto:      { era: 6, name: 'Automobiles',       fx: { walk: 0.25, cart: 0.6 }, does: 'trucks on the roads and quicker people' },
+  tanks:     { era: 6, name: 'Mechanized Warfare', fx: { mil: 0.6 },             does: 'armies of tanks' },
+  computers: { era: 6, name: 'Computers',         fx: { sci: 0.4, build: 0.3 },  does: 'faster learning and building' },
+};
+const TECH_COST = [60, 150, 380, 850, 1600, 2700, 4200];
+// how each era's buildings look: walls, roofs, lit windows
+const ERA_LOOK = [
+  { wall: '#9a6b44', roof: '#6e5a2c', win: '#e0a94a' },
+  { wall: '#c8a46e', roof: '#8a6a3a', win: '#e8b75a' },
+  { wall: '#b98f62', roof: '#7a4a2a', win: '#f0c75a' },
+  { wall: '#c9a57a', roof: '#8a3a28', win: '#f0c75a' },
+  { wall: '#e6dcc6', roof: '#b5533a', win: '#f4d27a' },
+  { wall: '#9c4a36', roof: '#4b4f57', win: '#f6dc8a' },
+  { wall: '#cfd5da', roof: '#5d7a95', win: '#bfe3f5' },
+];
+// roads are built by each realm's builders: walking speed on open ground, a dirt road, a stone road and an asphalt road
+const ROAD_SPEED = [1, 1.4, 1.65, 1.9];
+const ROAD_KINDS = ['', 'Dirt road', 'Stone road', 'Asphalt road'];
+const ROAD_ENDS = new Set(['tc', 'store', 'market', 'chapel', 'cathedral', 'castle', 'palace', 'wonder', 'dock', 'barracks', 'farm']);
+const roadTier = era => era >= 5 ? 3 : era >= 3 ? 2 : 1;
 const HOUSING = ['tc', 'hut', 'house', 'manor'];
 const LANDMARKS = ['chapel', 'market', 'cathedral', 'castle', 'palace'];
 const FACTION_NAMES = ['Thornbury', 'Greywater', 'Oakhurst', 'Larkspur', 'Ravensby', 'Millhaven', 'Stonebridge', 'Kestrel Hill', 'Ashford', 'Hollowell', 'Wyndham', 'Fallowmere', 'Corrowmere', 'Brackenhold', 'Northcombe', 'Eastwick', 'Dunhallow', 'Ironbrook',
@@ -396,9 +484,11 @@ let G = null;   // the running game
 
 // ========== the land ==========
 class Tile {
-  constructor(t, amt, h) { this.t = t; this.amt = amt; this.h = h; this.sap = 0; this.foot = 0; this.b = 0; this.c = 0; this.own = 0; }
+  constructor(t, amt, h) { this.t = t; this.amt = amt; this.h = h; this.sap = 0; this.foot = 0; this.b = 0; this.c = 0; this.own = 0; this.road = 0; }
   get water() { return this.t === 3; }
   get open() { return this.t === 0 || this.t === 1; }
+  // how fast people cross this tile: built roads are quicker than open ground (footpaths are just wear)
+  get speed() { return ROAD_SPEED[this.road]; }
 }
 
 // The world is a rectangle of chunks that grows outward as settlements need land.
@@ -434,7 +524,7 @@ class World {
     return sides;
   }
   ensure(x0, y0, x1, y1) { return this.growTo(Math.floor(x0 / CS), Math.floor(y0 / CS), Math.floor(x1 / CS), Math.floor(y1 / CS)); }
-  // breadth-first search inside a box around the trip, widened once if the trip has to go around a lake.
+  // the quickest walk (A*, roads count as cheaper ground) inside a box around the trip, widened once if the trip has to go around a lake.
   // With a realm f, other realms' land is closed unless f holds an open-borders treaty with them.
   // Someone already standing on closed land (the border moved under them) may walk out through it.
   findPath(sx, sy, tx, ty, f) {
@@ -447,7 +537,9 @@ class World {
       if (own && !pass[own]) pass = Object.assign({}, pass, { [own]: true });
     }
     // workers walk the same trips over and over, so remember routes until borders, treaties or the map change
-    if (!this.fresh(this._pathStamp) || this._paths.size > 4000) { this._paths = new Map(); this._pathStamp = this.stampNow(false); }
+    // paths wear in and fade over time, so routes are also forgotten each season
+    const season = G.year * 4 + G.season;
+    if (!this.fresh(this._pathStamp) || this._paths.size > 4000 || this._pathSeason !== season) { this._paths = new Map(); this._pathStamp = this.stampNow(false); this._pathSeason = season; }
     const n = this.w * this.h, id = ((f ? f.id : 0) * n + this.idx(sx, sy)) * n + this.idx(tx, ty);
     let p = this._paths.get(id);
     if (p === undefined) { p = this.searchBox(sx, sy, tx, ty, 10, pass) || this.searchBox(sx, sy, tx, ty, 40, pass); this._paths.set(id, p); }
@@ -484,38 +576,64 @@ class World {
     this._reach[f.id] = { stamp, r };
     return r;
   }
-  searchBox(sx, sy, tx, ty, m, pass) {
+  // plan: lay out a new road instead of a walk (no buildings, rock or camps in the way, existing road almost free)
+  searchBox(sx, sy, tx, ty, m, pass, plan) {
     const bx0 = Math.max(this.x0, Math.min(sx, tx) - m), by0 = Math.max(this.y0, Math.min(sy, ty) - m);
     const bx1 = Math.min(this.x1 - 1, Math.max(sx, tx) + m), by1 = Math.min(this.y1 - 1, Math.max(sy, ty) + m);
-    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
-    const prev = new Int32Array(bw * bh).fill(-1), start = (sy - by0) * bw + (sx - bx0), goal = (ty - by0) * bw + (tx - bx0);
-    if (goal < 0 || goal >= bw * bh || tx < bx0 || tx > bx1) return null;
-    const q = [start]; prev[start] = start;
-    for (let i = 0; i < q.length; i++) {
-      const cur = q[i];
-      if (cur === goal) break;
-      const x = cur % bw, y = (cur / bw) | 0;
-      for (const [dx, dy] of N4) {
-        const nx = x + dx, ny = y + dy;
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1, nb = bw * bh;
+    if (tx < bx0 || tx > bx1 || ty < by0 || ty > by1) return null;
+    const start = (sy - by0) * bw + (sx - bx0), goal = (ty - by0) * bw + (tx - bx0);
+    // scratch arrays are reused between searches: a stamp marks which entries belong to this one
+    if (!this._sb || this._sb.n < nb) this._sb = { n: nb, prev: new Int32Array(nb), g: new Float32Array(nb), seen: new Uint32Array(nb), done: new Uint32Array(nb), heap: new Int32Array(nb * 4), f: new Float32Array(nb * 4), run: 0 };
+    const S = this._sb, prev = S.prev, gs = S.g, seen = S.seen, done = S.done, heap = S.heap, fs = S.f, run = ++S.run;
+    const hk = plan ? 0.25 : 1 / ROAD_SPEED[3];
+    const h = n => (Math.abs(n % bw - (tx - bx0)) + Math.abs(((n / bw) | 0) - (ty - by0))) * hk;
+    let hn = 0;
+    const push = (n, f) => {
+      let i = hn++;
+      while (i > 0) { const p = (i - 1) >> 1; if (fs[p] <= f) break; heap[i] = heap[p]; fs[i] = fs[p]; i = p; }
+      heap[i] = n; fs[i] = f;
+    };
+    const pop = () => {
+      const top = heap[0], ln = heap[--hn], lf = fs[hn];
+      let i = 0;
+      for (;;) { let c = 2 * i + 1; if (c >= hn) break; if (c + 1 < hn && fs[c + 1] < fs[c]) c++; if (fs[c] >= lf) break; heap[i] = heap[c]; fs[i] = fs[c]; i = c; }
+      heap[i] = ln; fs[i] = lf;
+      return top;
+    };
+    seen[start] = run; gs[start] = 0; prev[start] = start; push(start, h(start));
+    let found = false;
+    while (hn) {
+      if (hn >= heap.length - 4) break;   // never in practice: each tile is queued at most a few times
+      const cur = pop();
+      if (done[cur] === run) continue;
+      done[cur] = run;
+      if (cur === goal) { found = true; break; }
+      const x = cur % bw, y = (cur / bw) | 0, gc = gs[cur];
+      for (let k = 0; k < 4; k++) {
+        const nx = x + N4[k][0], ny = y + N4[k][1];
         if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
         const n = ny * bw + nx;
-        if (prev[n] !== -1) continue;
+        if (done[n] === run) continue;
         const T = this.tiles[(ny + by0 - this.y0) * this.w + (nx + bx0 - this.x0)];
         if (pass && T.own && !pass[T.own]) continue;
         if (n !== goal && T.t === 3) continue;
-        prev[n] = cur; q.push(n);
+        if (plan && n !== goal && (T.b || T.c || T.t === 2)) continue;
+        const g = gc + (plan ? (T.road ? 0.25 : 1) : 1 / T.speed);
+        if (seen[n] === run && gs[n] <= g) continue;
+        seen[n] = run; gs[n] = g; prev[n] = cur; push(n, g + h(n));
       }
     }
-    if (prev[goal] === -1) return null;
+    if (!found) return null;
     const out = [];
     for (let n = goal; n !== start; n = prev[n]) out.push({ x: n % bw + bx0, y: ((n / bw) | 0) + by0 });
     return out.reverse();
   }
   // saves keep only what can't be regenerated: the terrain type, what's left of it, regrowth and footpaths
   toJSON() {
-    const t = [], a = [], sp = [], ft = [];
-    for (const T of this.tiles) { t.push(T.t); a.push(T.amt); sp.push(T.sap); ft.push(Math.round(T.foot)); }
-    return { seed: this.seed, x0: this.x0, y0: this.y0, w: this.w, h: this.h, t: t.join(''), a, sp, ft };
+    const t = [], a = [], sp = [], ft = [], rd = [];
+    for (const T of this.tiles) { t.push(T.t); a.push(T.amt); sp.push(T.sap); ft.push(Math.round(T.foot)); rd.push(T.road); }
+    return { seed: this.seed, x0: this.x0, y0: this.y0, w: this.w, h: this.h, t: t.join(''), a, sp, ft, rd: rd.join('') };
   }
   static from(d) {
     const W2 = new World(d.seed);
@@ -523,7 +641,7 @@ class World {
     W2.tiles = new Array(d.w * d.h);
     for (let i = 0; i < d.w * d.h; i++) {
       const x = W2.x0 + i % d.w, y = W2.y0 + ((i / d.w) | 0);
-      const T = new Tile(+d.t[i], d.a[i], hash2(x, y, d.seed + 9)); T.sap = d.sp[i]; T.foot = d.ft[i];
+      const T = new Tile(+d.t[i], d.a[i], hash2(x, y, d.seed + 9)); T.sap = d.sp[i]; T.foot = d.ft[i]; T.road = d.rd ? +d.rd[i] : 0;
       W2.tiles[i] = T;
     }
     return W2;
@@ -543,7 +661,7 @@ class Chronicle {
   }
   record(text, k, f) {
     this.history.unshift({ y: G.year, se: G.season, d: G.day, text, k: k || '', c: f ? f.color : '' });
-    if (this.history.length > 220) this.history.length = 220;
+    if (this.history.length > (window.__histMax || 220)) this.history.length = (window.__histMax || 220);
     this.dirty = true;
   }
   card(kicker, title, body, f) {
@@ -573,6 +691,8 @@ class Building {
   get spec() { return BUILD[this.type]; }
   get houses() { return this.built ? (BUILD[this.type].house || 0) : (this.from ? BUILD[this.from].house || 0 : 0); }
   get owner() { return G.F(this.f); }
+  // a border can swing over a farm or a site: nobody works a building that stands on another realm's land
+  get onHome() { const T = G.world.tile(this.x, this.y); return !T || !T.own || T.own === this.f; }
 }
 
 // ========== people ==========
@@ -617,8 +737,8 @@ class Colonist {
       const winter = G.season === 3;
       // keep working our own field if it still has room: most farmer decisions end here
       const cur = !winter && this.tid ? G.byId(this.tid) : null;
-      if (cur && cur.built && cur.f === f.id && (cur.type === 'farm' || cur.type === 'dock') && cl.tid(cur.id) < BUILD[cur.type].slots && this.reach(cur.x, cur.y)) return cur;
-      const ok = f.buildings.filter(b => b.built && (b.type === 'dock' || b.type === 'farm') && cl.tid(b.id) < BUILD[b.type].slots && this.reach(b.x, b.y));
+      if (cur && cur.built && cur.f === f.id && (cur.type === 'farm' || cur.type === 'dock') && cur.onHome && cl.tid(cur.id) < BUILD[cur.type].slots && this.reach(cur.x, cur.y)) return cur;
+      const ok = f.buildings.filter(b => b.built && (b.type === 'dock' || b.type === 'farm') && b.onHome && cl.tid(b.id) < BUILD[b.type].slots && this.reach(b.x, b.y));
       if (!ok.length) return null;
       const mine = ok.find(b => b.id === this.tid);
       if (mine && !(winter && mine.type === 'farm' && ok.some(b => b.type === 'dock'))) return mine;
@@ -626,8 +746,17 @@ class Colonist {
       return ok[0];
     }
     if (this.job === 'builder') {
-      const sites = f.buildings.filter(b => !b.built && this.reach(b.x, b.y));
-      if (!sites.length) return null;
+      const sites = f.buildings.filter(b => !b.built && b.onHome && this.reach(b.x, b.y));
+      if (!sites.length) {
+        // no buildings to raise: lay the next stretch of planned road
+        let best = null, bd = 1e9;
+        for (const p of f.roadPlan.slice(0, 8)) {
+          if (cl.tile(p.x, p.y) >= 1 || !this.reach(p.x, p.y)) continue;
+          const d = dist(this, p.x, p.y);
+          if (d < bd) { bd = d; best = { x: p.x, y: p.y, id: 0 }; }
+        }
+        return best;
+      }
       sites.sort((a, b) => (cl.tid(a.id) - cl.tid(b.id)) * 3 + dist(this, a.x, a.y) - dist(this, b.x, b.y));
       return sites[0];
     }
@@ -696,14 +825,14 @@ class Colonist {
     const f = this.home;
     if (this.job === 'farmer') {
       const b = G.byId(this.tid);
-      if (!b || !b.built || b.f !== f.id) return quit();
+      if (!b || !b.built || b.f !== f.id || !b.onHome) return quit();
       this.wt += dt;
       if (this.wt >= 5) { this.carry = { r: 'food', n: f.farmYield(b) }; this.goStore(); }
     } else if (this.job === 'woodcutter' || this.job === 'miner') {
       const T = G.world.tile(this.tx, this.ty), want = this.job === 'woodcutter' ? 1 : 2;
-      if (!T || T.t !== want || T.amt <= 0) return quit();
+      if (!T || T.t !== want || T.amt <= 0 || (T.own && T.own !== f.id)) return quit();
       this.wt += dt;
-      if (this.wt >= (want === 1 ? 5 : 6)) {
+      if (this.wt * (1 + f.fx('work')) >= (want === 1 ? 5 : 6)) {
         const n = Math.min((want === 1 ? 3 : 2) + (f.age >= 3 ? 1 : 0), T.amt);
         T.amt -= n;
         if (T.amt <= 0) { T.t = 0; T.amt = 0; if (want === 1) T.sap = ri(10, 16); }
@@ -711,12 +840,33 @@ class Colonist {
         this.carry = { r: want === 1 ? 'wood' : 'stone', n };
         this.goStore();
       }
+    } else if (this.job === 'builder' && !this.tid) {
+      const i = f.roadPlan.findIndex(p => p.x === this.tx && p.y === this.ty), W = G.world, T = W.tile(this.tx, this.ty);
+      if (i < 0 || !T || !f.steward.roadOk(T)) { if (i >= 0) f.roadPlan.splice(i, 1); return quit(); }
+      this.wt += dt * (1 + f.fx('build'));
+      if (this.wt < 3) return;
+      const cost = f.steward.roadCost();
+      if (!f.afford(cost)) return quit();
+      f.pay(cost);
+      f.roadPlan.splice(i, 1);
+      T.road = roadTier(f.era);
+      if (T.t === 1) { T.t = 0; T.amt = 0; }
+      T.sap = 0;
+      W.touch(this.tx, this.ty); W.touch(this.tx - 1, this.ty); W.touch(this.tx + 1, this.ty); W.touch(this.tx, this.ty - 1); W.touch(this.tx, this.ty + 1);
+      quit();
     } else if (this.job === 'builder') {
       const b = G.byId(this.tid);
-      if (!b || b.built || b.f !== f.id) return quit();
-      b.prog += dt;
+      if (!b || b.built || b.f !== f.id || !b.onHome) return quit();
+      b.prog += dt * (f.hasGreat('architect') ? 1.5 : 1) * (1 + f.fx('build'));
       if (b.prog >= BUILD[b.type].time) {
         b.built = true; delete b.from;
+        if (b.type === 'wonder') {
+          const W = WONDERS[b.wk];
+          G.chron.record(`${f.name} completed ${W.name}, a wonder of the world that brings ${W.does}.`, 'good', f);
+          G.chron.card('A wonder of the world', `${upper(W.name)} stands in ${f.name}`, `Raised under ${f.title}. It brings ${W.does}.`, f);
+          View.toast(`${f.name} completed ${W.name}`, 'good');
+          if (!f.ruler.ep) f.ruler.ep = EPITHETS.build;
+        }
         if (BUILD[b.type].mark) { G.chron.note(`${f.name} finished its ${BUILD[b.type].name.toLowerCase()}.`, 'good'); View.toast(`${f.name}: ${BUILD[b.type].name.toLowerCase()} finished`, 'good'); }
         quit();
       }
@@ -731,15 +881,18 @@ class Colonist {
   }
   update(dt) {
     if (this.path.length) {
-      let move = SPEED * (this.home.age >= 3 ? 1.15 : 1) * dt;
-      while (move > 0 && this.path.length) {
+      // time left this step; each stretch goes at the speed of the ground it leads onto
+      const base = SPEED * (this.home.age >= 3 ? 1.15 : 1) * (1 + this.home.fx('walk'));
+      let left = dt;
+      while (left > 0 && this.path.length) {
         const n = this.path[0], dx = n.x - this.x, dy = n.y - this.y, d = Math.hypot(dx, dy);
-        if (d <= move) {
-          this.x = n.x; this.y = n.y; this.path.shift(); move -= d;
+        const N = G.world.tile(n.x, n.y), v = base * (N ? N.speed : 1);
+        if (d <= v * left) {
+          this.x = n.x; this.y = n.y; this.path.shift(); left -= d / v;
           const T = G.world.tile(n.x, n.y);
           if (T && T.foot < 400) { T.foot += 1; if (T.foot === 13 || T.foot === 61 || T.foot === 161) G.world.touch(n.x, n.y); }
           if (this.path.length && this.barred(T, this.path[0])) { this.path = []; this.st = 'idle'; this.wait = 0.5; return; }
-        } else { this.x += dx / d * move; this.y += dy / d * move; move = 0; }
+        } else { this.x += dx / d * v * left; this.y += dy / d * v * left; left = 0; }
       }
       if (!this.path.length) this.arrive();
       return;
@@ -759,20 +912,21 @@ class Steward {
     const f = this.f, crew = f.people.filter(o => o.st !== 'exodus');
     const pop = crew.length, se = G.season;
     if (!pop) return;
-    const slots = f.buildings.filter(b => b.built && (b.type === 'farm' || b.type === 'dock')).reduce((n, b) => n + BUILD[b.type].slots, 0);
-    const sites = f.buildings.filter(b => !b.built).length;
+    const slots = f.buildings.filter(b => b.built && b.onHome && (b.type === 'farm' || b.type === 'dock')).reduce((n, b) => n + BUILD[b.type].slots, 0);
+    const sites = f.buildings.filter(b => !b.built && b.onHome).length;
     const c = f.cap;
     let foodShare = se === 3 ? 0.42 : 0.36;
     if (f.res.food < pop * 3) foodShare += 0.1;
     if (f.res.food > c * 0.9) foodShare -= 0.2;
     const want = {};
     want.farmer = Math.min(slots, Math.max(1, Math.ceil(pop * foodShare)));
-    want.builder = sites ? Math.min(Math.ceil(sites * 1.6), Math.max(1, Math.ceil(pop * 0.18))) : 0;
+    const roadWork = f.afford(this.roadCost()) ? Math.min(2, Math.ceil(f.roadPlan.length / 8)) : 0, work = sites + roadWork;
+    want.builder = work ? Math.min(Math.ceil(work * 1.6), Math.max(1, Math.ceil(pop * 0.18))) : 0;
     const stoneHungry = f.res.stone < c * 0.85;
     want.miner = stoneHungry ? Math.max(1, Math.ceil(pop * (f.age >= 2 ? 0.22 : 0.15))) : 0;
     let rest = pop - want.farmer - want.builder - want.miner;
     if (rest < 0) { want.miner = Math.max(0, want.miner + rest); rest = pop - want.farmer - want.builder - want.miner; }
-    if (rest < 0) { want.builder = Math.max(sites ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner; }
+    if (rest < 0) { want.builder = Math.max(work ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner; }
     want.woodcutter = Math.max(0, rest);
     if (f.res.wood >= c * 0.95 && want.woodcutter > 1) { const m = Math.floor(want.woodcutter / 2); want.woodcutter -= m; if (stoneHungry) want.miner += m; else want.farmer += m; }
     const have = {}; for (const k in JOBS) have[k] = 0;
@@ -795,7 +949,7 @@ class Steward {
   }
   canPlace(type, x, y) {
     const W = G.world, T = W.tile(x, y);
-    if (!T || T.b || T.c || T.own !== this.f.id || !T.open) return false;
+    if (!T || T.b || T.c || T.road || T.own !== this.f.id || !T.open) return false;
     if (type === 'dock') return N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.t === 3; });
     return N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.t !== 3 && !N.b; });
   }
@@ -820,6 +974,7 @@ class Steward {
       if (d < 1.5) continue;
       let sc = T.t === 1 ? 1.8 : 0;
       if (T.foot > 60 && type !== 'dock') sc += 2.5;
+      if (type !== 'farm' && type !== 'dock' && N4.some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return N && N.road; })) sc -= 1.2;   // front onto a road
       if (HOUSING.includes(type)) {
         sc += d * 0.9 - this.near(x, y, 1, isType(HOUSING)) * 0.7 + this.near(x, y, 1, isType(['farm'])) * 1.2 + j * 1.8;
       } else if (type === 'farm') {
@@ -833,7 +988,7 @@ class Steward {
       } else if (type === 'dock') {
         sc += d * 0.6 + j;
       } else {
-        const want = BUILD[type].mark >= 4 ? 3.5 : 2.5;
+        const want = type === 'wonder' ? 4.5 : BUILD[type].mark >= 4 ? 3.5 : 2.5;
         sc += Math.abs(d - want) * 1.1 - this.near(x, y, 1, isType(HOUSING)) * 0.3 + j * 0.8;
       }
       if (sc < bs) { bs = sc; best = { x, y }; }
@@ -869,9 +1024,10 @@ class Steward {
   }
   build() {
     const f = this.f, pop = f.pop, se = G.season, c = f.cap;
+    this.dropStranded();
     const sites = f.buildings.filter(b => !b.built);
     if (sites.length >= 1 + Math.floor(pop / 10)) return;
-    const slots = f.buildings.filter(b => b.type === 'farm' || b.type === 'dock').reduce((n, b) => n + BUILD[b.type].slots, 0);
+    const slots = f.buildings.filter(b => (b.type === 'farm' || b.type === 'dock') && b.onHome).reduce((n, b) => n + BUILD[b.type].slots, 0);
     const next = AGES[f.age + 1];
     const lost = f.age > 0 && !f.anyCount(AGES[f.age].mark) ? AGES[f.age] : null;
     const markType = lost ? lost.mark : next ? next.mark : null;
@@ -908,7 +1064,85 @@ class Steward {
       }
     }
     if (f.anyCount('dock') < 1 + Math.floor(pop / 25) && tryBuild('dock', 'Building a dock so there is fish in winter.')) return;
+    // wonders stay rare: one under way in the world at a time, three years apart, at most two per realm
+    const wonderBusy = G.buildings.some(b => b.type === 'wonder' && !b.built) || G.day - (G.lastWonder || -1e9) < YEAR * 3;
+    if (f.age >= 4 && pop >= 120 && !markNeeded && !wonderBusy && f.anyCount('wonder') < 2 && f.res.stone >= BUILD.wonder.cost.stone * 1.15 && f.res.wood >= BUILD.wonder.cost.wood * 1.15 && rnd() < 0.01) {
+      const taken = new Set(G.buildings.filter(b => b.type === 'wonder').map(b => b.wk));
+      const free = Object.keys(WONDERS).filter(k => !taken.has(k));
+      if (free.length && tryBuild('wonder', 'Raising a wonder of the world.')) {
+        const site = f.buildings.filter(b => b.type === 'wonder' && !b.built).pop();
+        site.wk = pick(free); G.lastWonder = G.day;
+        f.note = `Raising ${WONDERS[site.wk].name}, a wonder of the world.`;
+        G.chron.note(`${f.name} began building ${WONDERS[site.wk].name}.`, 'good');
+        G.chron.record(`${f.title} of ${f.name} ordered work to begin on ${WONDERS[site.wk].name}.`, '', f);
+      }
+    }
     if (f.age >= 1 && pop < POPCAP[f.age] && pop >= f.futureHousing - 4 && tryBuild('hut', 'Building homes ahead of newcomers.')) return;
+  }
+  // building sites that a neighbour's border swallowed can never be finished: an upgrade falls back to what stood there, a new site is given up
+  dropStranded() {
+    const f = this.f, gone = f.buildings.filter(b => !b.built && !b.onHome);
+    if (!gone.length) return;
+    const W = G.world;
+    for (const b of gone) {
+      if (b.from) { b.type = b.from; b.built = true; b.prog = 0; delete b.from; }
+      else { const T = W.tile(b.x, b.y); if (T && T.b === b.id) T.b = 0; G.buildings.splice(G.buildings.indexOf(b), 1); }
+      W.touch(b.x, b.y);
+    }
+    G.dirtyB();
+  }
+  // ---------- roads ----------
+  // Roads are planned, not worn in: the steward links the town centre to whatever its people travel to most,
+  // one destination at a time, and builders lay the planned tiles for wood (and stone from the Medieval Era).
+  roadCost() { return this.f.era >= 3 ? { wood: 2, stone: 1 } : { wood: 2 }; }
+  roadOk(T) { return T && !T.road && !T.b && !T.c && T.t !== 2 && T.t !== 3 && (!T.own || T.own === this.f.id); }
+  queueRoad(path, keep) {
+    const f = this.f, W = G.world, have = new Set(f.roadPlan.map(p => p.x + ',' + p.y));
+    for (let i = 0; i < path.length; i++) {
+      const p = path[i], T = W.tile(p.x, p.y);
+      if (!this.roadOk(T) || have.has(p.x + ',' + p.y) || (keep && !keep(T, i))) continue;
+      f.roadPlan.push({ x: p.x, y: p.y }); have.add(p.x + ',' + p.y);
+    }
+  }
+  planRoads() {
+    const f = this.f, t = f.tc, W = G.world;
+    f.roadPlan = f.roadPlan.filter(p => this.roadOk(W.tile(p.x, p.y)));
+    if (!t || f.age < 1 || f.roadPlan.length > 4) return;
+    // the road network that already reaches the town centre
+    const net = new Set(), q = [];
+    for (const [dx, dy] of N4) { const T = W.tile(t.x + dx, t.y + dy); if (T && T.road) { const k = (t.x + dx) + ',' + (t.y + dy); net.add(k); q.push([t.x + dx, t.y + dy]); } }
+    while (q.length) {
+      const [x, y] = q.pop();
+      for (const [dx, dy] of N4) { const k = (x + dx) + ',' + (y + dy); if (net.has(k)) continue; const T = W.tile(x + dx, y + dy); if (T && T.road) { net.add(k); q.push([x + dx, y + dy]); } }
+    }
+    const linked = b => N4.some(([dx, dy]) => net.has((b.x + dx) + ',' + (b.y + dy)));
+    const PRI = { tc: 6, store: 5, market: 4, chapel: 3, cathedral: 3, castle: 3, palace: 3, wonder: 3, dock: 2, barracks: 2, farm: 1 };
+    let best = null, bs = -1e9;
+    for (const b of f.buildings) {
+      const pr = PRI[b.type];
+      if (!pr || b === t || !b.built || !b.onHome || b._noRoad > G.day || linked(b)) continue;
+      const d = Math.hypot(b.x - t.x, b.y - t.y);
+      if (d < 2.5 || (b.type === 'farm' && d < 5)) continue;
+      const sc = pr * 10 - d / 3;
+      if (sc > bs) { bs = sc; best = b; }
+    }
+    if (!best) return;
+    const p = W.searchBox(t.x, t.y, best.x, best.y, 6, { [f.id]: true }, true);
+    // only a fairly direct road is worth building; one that has to snake round the town waits a year for a better way through
+    if (p && p.length <= (Math.abs(best.x - t.x) + Math.abs(best.y - t.y)) * 1.5 + 3) this.queueRoad(p.slice(0, -1)); else best._noRoad = G.day + YEAR;
+  }
+  // a trade road is surveyed once for the route, then each realm lays the half nearer its own town centre, so the halves meet
+  planTradeRoad(o, r) {
+    const f = this.f, W = G.world;
+    if (!r.lane) {
+      const A = G.F(r.a), B = G.F(r.b), a = A && A.tc, b = B && B.tc;
+      if (!a || !b) return;
+      const p = W.searchBox(a.x, a.y, b.x, b.y, 12, { [A.id]: true, [B.id]: true }, true);
+      r.lane = p && p.length <= (Math.abs(a.x - b.x) + Math.abs(a.y - b.y)) * 1.4 + 6 ? [{ x: a.x, y: a.y }, ...p].map(q => ({ x: q.x, y: q.y })) : [];
+    }
+    if (!r.lane.length || f.roadPlan.length > 4) return;
+    const mine = r.a === f.id, n = r.lane.length;
+    this.queueRoad(mine ? r.lane : r.lane.slice().reverse(), (T, i) => i < n / 2 || T.own === f.id);
   }
   trade() {
     const f = this.f, c = f.cap;
@@ -928,6 +1162,11 @@ class Settlement {
     if (this.note === undefined) this.note = typeof steward === 'string' ? steward : '';
     if (this.ruler && !(this.ruler instanceof Ruler)) this.ruler = new Ruler(this.ruler);
     if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
+    if (!this.roadPlan) this.roadPlan = [];
+    if (!this.techs) {   // saves from before the tech tree: credit older realms with the early eras
+      const n = Math.floor((this.age + 1) / 2);
+      this.techs = Object.keys(TECHS).filter(t => TECHS[t].era < n); this.study = null; this.sci = 0;
+    }
   }
   static found(name, x, y, parent) {
     const used = new Set(G.factions.map(f => f.name));
@@ -937,7 +1176,8 @@ class Settlement {
     const f = new Settlement({ id: G.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10 }, mood: 62, grief: 0, moodWhy: [],
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
       stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
-      culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40 });
+      culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40,
+      techs: parent ? parent.techs.slice() : [], study: null, sci: 0, roadPlan: [] });
     f.ruler = Ruler.crown(f);
     return f;
   }
@@ -950,9 +1190,9 @@ class Settlement {
   anyCount(type) { let n = 0; for (const b of this.buildings) if (b.type === type) n++; return n; }
   get housing() { return this.buildings.reduce((n, b) => n + b.houses, 0); }
   get futureHousing() { return this.buildings.reduce((n, b) => n + (BUILD[b.type].house || 0), 0); }
-  get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age; }
+  get cap() { return 100 + 100 * this.builtCount('store') + 50 * this.age + this.fx('cap'); }
   get drops() {
-    if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store')); }
+    if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store') && b.onHome); }
     return this._drops;
   }
   nearestDrop(x, y, ok) {
@@ -960,7 +1200,79 @@ class Settlement {
     for (const b of this.drops) { if (ok && !ok(b)) continue; const d = Math.abs(b.x - x) + Math.abs(b.y - y); if (d < bd) { bd = d; best = b; } }
     return best;
   }
-  get military() { return this.buildings.reduce((n, b) => n + (b.built ? BUILD[b.type].def || 0 : 0), 0) + Math.floor(this.pop / 6); }
+  get military() { return Math.floor((this.buildings.reduce((n, b) => n + (b.built ? BUILD[b.type].def || 0 : 0), 0) + Math.floor(this.pop / 6)) * (this.hasGreat('general') ? 1.3 : 1) * (1 + this.fx('mil'))) + (this.hasWonder('wall') ? 30 : 0); }
+  hasWonder(k) { return this.buildings.some(b => b.type === 'wonder' && b.built && b.wk === k); }
+  hasGreat(k) { return !!(this.great && this.great.kind === k); }
+  // --- the tech tree ---
+  // everything a realm has learned, summed once per new discovery
+  techFx() {
+    const ts = this.techs || (this.techs = []);
+    if (this._fxn !== ts.length) {
+      const o = { era: 0 };
+      for (const t of ts) { const T = TECHS[t]; if (!T) continue; o.era = Math.max(o.era, T.era); for (const k in T.fx) o[k] = (o[k] || 0) + T.fx[k]; }
+      this._fx = o; this._fxn = ts.length;
+    }
+    return this._fx;
+  }
+  fx(k) { return this.techFx()[k] || 0; }
+  get era() { return this.techFx().era; }
+  knows(t) { return this.techs.includes(t); }
+  canStudy(t) {
+    const T = TECHS[t];
+    if (this.knows(t)) return false;
+    return !T.era || this.techs.filter(x => TECHS[x].era === T.era - 1).length >= 2;
+  }
+  // ideas travel: a tech is cheaper to learn when a neighbour, ally or trade partner already knows it
+  techNear(t) {
+    return G.alive().some(o => o !== this && o.knows(t) && ((G.dip.contact[key(this.id, o.id)] || 0) > 0 || G.dip.stanceOf(this, o) === 'ally' || G.trade.routes.some(r => (r.a === this.id && r.b === o.id) || (r.b === this.id && r.a === o.id))));
+  }
+  techCost(t) { return Math.round(TECH_COST[TECHS[t].era] * (this._near ? 0.65 : 1)); }
+  get sciRate() {
+    return (1.5 + this.pop * 0.045) * (1 + this.fx('sci')) * (this.hasWonder('library') ? 1.4 : 1) * (this.hasGreat('scholar') ? 1.3 : 1) * clamp(this.mood / 60, 0.6, 1.3);
+  }
+  // the steward picks what to study next: unfinished business from earlier eras first, then what the realm needs
+  pickStudy() {
+    const open = Object.keys(TECHS).filter(t => this.canStudy(t));
+    if (!open.length) { this.study = null; return; }
+    const war = this.enemies.length || this.campsNear(16).length, hungry = this.res.food < this.pop * 3;
+    const w = open.map(t => {
+      const T = TECHS[t];
+      let v = 1 + (T.era < this.era ? 3 : 0);
+      if (war && T.fx.mil) v += 3;
+      if (hungry && (T.fx.farm || T.fx.fish)) v += 3;
+      if (this.builtCount('market') && (T.fx.goods || T.fx.cart)) v += 1;
+      if (T.fx.sci) v += 1;
+      return v;
+    });
+    let r = rnd() * w.reduce((n, v) => n + v, 0);
+    this.study = open[open.length - 1];
+    for (let i = 0; i < open.length; i++) if ((r -= w[i]) <= 0) { this.study = open[i]; break; }
+    this._near = this.techNear(this.study);
+  }
+  research() {
+    if (!this.study || this.knows(this.study)) { this.sci = 0; this.pickStudy(); if (!this.study) return; }
+    if (G.day % 8 === 0) this._near = this.techNear(this.study);
+    this.sci = (this.sci || 0) + this.sciRate;
+    if (this.sci >= this.techCost(this.study)) this.learn([this.study], 'discovered');
+  }
+  // learn one or more techs at once (a discovery, or the spoils of a conquest) and mark a new era
+  learn(list, how) {
+    const was = this.era, C = G.chron, got = list.filter(t => TECHS[t] && !this.knows(t));
+    if (!got.length) return;
+    this.techs.push(...got); this.sci = 0; this.study = null;
+    const names = got.map(t => TECHS[t].name);
+    C.note(`${this.name} ${how} ${names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : `${names[0]}, which brings ${TECHS[got[0]].does}`}.`, 'good');
+    const e = this.era;
+    if (e <= was) return;
+    const recs = G.eraFirst || (G.eraFirst = {}), first = !recs[e], nm = ERAS[e];
+    if (first) recs[e] = { n: this.name, d: G.day, c: this.color };
+    C.record(`${this.name} entered the ${nm}${first ? ', the first realm in the world to get there' : ''}.`, 'age', this);
+    if (first) C.card('First in the world', `${this.name} enters the ${nm}`, `${TECHS[got[got.length - 1]].name} opens a new era. Its buildings, roads and armies change with it.`, this);
+    View.toast(`${this.name} entered the ${nm}`, 'good');
+    const tier = roadTier(e);   // the realm's roads are rebuilt in the new era's material
+    for (const T of G.world.tiles) if (T.road && T.own === this.id && T.road < tier) T.road = tier;
+    G.world.touchAll();   // roads and buildings take on the new era's look
+  }
   get defense() { return this.military + G.alive().reduce((n, o) => n + (o !== this && G.dip.stanceOf(this, o) === 'ally' ? Math.floor(o.military / 3) : 0), 0); }
   get enemies() { return G.alive().filter(o => o !== this && G.dip.stanceOf(this, o) === 'war'); }
   get allies() { return G.alive().filter(o => o !== this && G.dip.stanceOf(this, o) === 'ally'); }
@@ -972,10 +1284,10 @@ class Settlement {
   get title() { return this.ruler.title(this.age); }
   get rulerName() { return this.ruler.fullName; }
   farmYield(b) {
-    if (b.type === 'dock') return 2 + (this.age >= 3 ? 1 : 0);
+    if (b.type === 'dock') return 2 + (this.age >= 3 ? 1 : 0) + this.fx('fish');
     const se = G.season;
-    if (se === 3) return 1;
-    return 3 + (se === 2 ? 1 : 0) + (this.age >= 2 ? 1 : 0) + (this.age >= 4 ? 1 : 0);
+    if (se === 3) return (this.hasWonder('gardens') ? 2 : 1) + Math.floor(this.fx('farm') / 2);
+    return 3 + (se === 2 ? 1 : 0) + (this.age >= 2 ? 1 : 0) + (this.age >= 4 ? 1 : 0) + (this.hasWonder('gardens') ? 1 : 0) + this.fx('farm');
   }
   centers() {
     const r = RADIUS[this.age] + Math.min(2, this.buildings.length / 40);
@@ -994,6 +1306,38 @@ class Settlement {
     return list.length;
   }
   // --- mood ---
+  // small story beats so the quiet early years still have something to report
+  milestones() {
+    const C = G.chron, p = this.pop, steps = [25, 50, 100, 200, 300, 400];
+    const hit = steps.filter(s => p >= s).pop() || 0;
+    if (this.mile === undefined) { this.mile = hit; this.wintered = G.day - this.founded > YEAR; return; }   // new realm, or a save from before milestones
+    if (hit > this.mile) {
+      this.mile = hit;
+      C.record(`${this.name} counted ${hit} people for the first time.`, 'good', this);
+      View.toast(`${this.name} reached ${hit} people`, 'good');
+    }
+    if (G.season === 0 && G.dayOfSeason === 1 && !this.wintered && G.day - this.founded > SEASON_DAYS * 2) {
+      this.wintered = true;
+      C.record(`${this.name} came through its first winter${this.stats && this.stats.died ? `, though ${this.stats.died} did not` : ' without losing anyone'}.`, this.stats && this.stats.died ? '' : 'good', this);
+    }
+  }
+  // a great person is born now and then, serves for some years, and is remembered in the chronicle
+  greatDaily() {
+    const g = this.great, C = G.chron;
+    if (g && G.day >= g.until) {
+      C.record(`${g.name} ${g.ep}, the great ${GREATS[g.kind].what} of ${this.name}, died after ${Math.round((G.day - g.since) / YEAR)} years of service.`, '', this);
+      this.great = null;
+      return;
+    }
+    if (g || this.pop < 30 || rnd() > 0.0012 * (1 + this.age)) return;
+    const kinds = Object.keys(GREATS).filter(k => k !== 'merchant' || this.builtCount('market')).filter(k => k !== 'saint' || this.faith);
+    const kind = pick(kinds), G2 = GREATS[kind];
+    this.great = { kind, name: pick(NAMES), ep: pick(G2.eps), since: G.day, until: G.day + ri(5, 14) * YEAR };
+    const n = this.great;
+    C.record(`${n.name} ${n.ep} rose to fame in ${this.name}, a great ${G2.what} who brings ${G2.does}.`, 'good', this);
+    C.note(`A great ${G2.what}, ${n.name} ${n.ep}, appeared in ${this.name}.`, 'good');
+    C.card(`A great ${G2.what}`, `${n.name} ${n.ep}`, `${upper(an(G2.what))} of ${this.name}, bringing ${G2.does}.`, this);
+  }
   moodTarget() {
     const pop = this.pop, why = [];
     if (!pop) return { m: 50, why };
@@ -1015,12 +1359,20 @@ class Settlement {
     if (tr && tr.m) { m += tr.m; why.push(tr.why); }
     if (this.age >= 4 && this.highSince) { const dec = Math.min(12, Math.floor((G.day - this.highSince) / YEAR) * 2); if (dec) { m -= dec; why.push('a decadent court'); } }
     if (this.plague) { m -= 12; why.push('plague'); }
+    if (this.hasWonder('library')) { m += 6; why.push('the Great Library'); }
+    if (this.hasWonder('arena')) { m += 5; why.push('games in the Arena'); }
+    if (this.hasGreat('scholar')) { m += 5; why.push(`the scholar ${this.great.name}`); }
+    const tm = this.fx('mood'); if (tm) { m += tm; why.push(`the comforts of the ${ERAS[this.era].replace(' Era', '').toLowerCase()} age`); }
     return { m: clamp(m, 0, 100), why };
   }
   // --- one day in the life of the settlement ---
   daily() {
     const se = G.season;
     if (!this.pop) { this.fall('was abandoned. Its last people are gone'); return; }
+    this.greatDaily();
+    this.milestones();
+    this.research();
+    if (rnd() < 0.3) this.steward.planRoads();
     let hungry = 0, starved = 0;
     for (const c of shuffle(this.people.slice())) {
       if (this.res.food >= 1) { this.res.food--; c.hun = 0; } else { c.hun++; hungry++; if (c.hun >= 3) { G.kill(c); starved++; } }
@@ -1039,7 +1391,7 @@ class Settlement {
     const pop = this.pop, spare = this.housing - pop;
     const room = pop < POPCAP[this.age] && G.cols.length < WORLD_CAP && !this.plague;
     if (room && pop >= 2 && spare > 0 && this.res.food >= pop * 1.5 && se !== 3) {
-      const rate = 0.012 + 0.006 * this.builtCount('chapel') + 0.008 * this.builtCount('cathedral') + 0.008 * this.builtCount('palace');
+      const rate = (0.012 + 0.006 * this.builtCount('chapel') + 0.008 * this.builtCount('cathedral') + 0.008 * this.builtCount('palace')) * (1 + this.fx('growth'));
       const n = Math.min(spare, Math.floor(pop * rate * moodK + rnd()));
       for (let i = 0; i < n; i++) { this.spawn(null); this.stats.born++; }
     }
@@ -1484,6 +1836,7 @@ class Diplomacy {
     for (const k of ['food', 'wood', 'stone']) a.res[k] = Math.min(a.cap, a.res[k] + Math.floor(b.res[k] / 2));
     G.dirtyB(); G.dirtyC();
     b.gone = true;
+    a.learn(b.techs || [], `took the knowledge of ${b.name}:`);
     a.grief += 2;
     G.chron.note(`${a.name} conquered ${b.name}. Its ${ppl} now answer${n === 1 ? 's' : ''} to ${a.name}.`, 'bad');
     const kin = b.parent === a.id || a.parent === b.id;
@@ -1525,7 +1878,7 @@ class Faiths {
     f.faith = x.id;
     return x;
   }
-  strength(f) { return f.pop * (0.5 + f.zeal / 100) * (1 + f.builtCount('chapel') + 2 * f.builtCount('cathedral')); }
+  strength(f) { return f.pop * (0.5 + f.zeal / 100) * (1 + f.builtCount('chapel') + 2 * f.builtCount('cathedral')) * (f.hasGreat('saint') ? 2 : 1) * (f.hasWonder('temple') ? 1.5 : 1); }
   convert(f, x, how) {
     const old = this.get(f.faith);
     f.faith = x.id; f.zeal = Math.max(25, f.zeal - 15);
@@ -1535,7 +1888,7 @@ class Faiths {
     const fs = G.alive(), dip = G.dip;
     for (const f of fs) {
       // zeal drifts toward what its ruler and churches make it
-      const want = 30 + (f.ruler.trait === 'pious' ? 25 : 0) + (f.ruler.trait === 'wise' ? -5 : 0) + 5 * Math.min(3, f.builtCount('chapel')) + 15 * Math.min(1, f.builtCount('cathedral')) + (this.holy(f) ? 10 : 0) + (f.enemies.some(o => o.faith && o.faith !== f.faith) ? 8 : 0);
+      const want = 30 + (f.hasGreat('saint') ? 20 : 0) + (f.hasWonder('temple') ? 20 : 0) + (f.ruler.trait === 'pious' ? 25 : 0) + (f.ruler.trait === 'wise' ? -5 : 0) + 5 * Math.min(3, f.builtCount('chapel')) + 15 * Math.min(1, f.builtCount('cathedral')) + (this.holy(f) ? 10 : 0) + (f.enemies.some(o => o.faith && o.faith !== f.faith) ? 8 : 0);
       f.zeal = clamp((f.zeal || 40) + (want - (f.zeal || 40)) * 0.05, 0, 100);
       if (f.faith && this.get(f.faith) && !this.get(f.faith).gone) continue;
       if (!f.builtCount('chapel')) continue;
@@ -1583,6 +1936,87 @@ class Faiths {
   toJSON() { return { list: this.list, nid: this.nid }; }
 }
 
+// ---------- trade routes ----------
+// Friendly realms that both have a market open a named road between their town centres. Caravans walk it,
+// and each delivery adds goods to both ends and warms relations. War or a lost market closes the road.
+const ROAD_NAMES = ['Amber', 'Salt', 'Wool', 'Iron', 'Spice', 'Silver', 'Honey', 'Timber', 'Copper', 'Linen', 'Pilgrim', 'Old', 'King\'s', 'Grain', 'Glass', 'Dye'];
+class Trade {
+  constructor(d) { this.routes = ((d && d.routes) || []).map(r => ({ ...r })); this.nid = (d && d.nid) || 1; this.caravans = []; }
+  ok(a, b) {
+    const dip = G.dip, st = dip.stanceOf(a, b), ta = a.tc, tb = b.tc;
+    if (st === 'war' || !ta || !tb || !a.builtCount('market') || !b.builtCount('market')) return false;
+    if (Math.abs(ta.x - tb.x) + Math.abs(ta.y - tb.y) > 90) return false;
+    return st === 'ally' || dip.isOpen(a, b) || dip.relOf(a, b) >= 10;
+  }
+  // the road itself: the walk between town centres through either realm's land, recomputed each season
+  path(r) {
+    const stamp = G.year * 4 + G.season;
+    if (r._p !== undefined && r._s === stamp) return r._p;
+    const a = G.F(r.a), b = G.F(r.b), ta = a && a.tc, tb = b && b.tc;
+    let p = null;
+    if (ta && tb) {
+      const pass = Object.assign({}, G.dip.passFor(a), G.dip.passFor(b));
+      p = G.world.searchBox(ta.x, ta.y, tb.x, tb.y, 30, pass);
+      if (p) p.unshift({ x: ta.x, y: ta.y });
+    }
+    r._p = p; r._s = stamp;
+    return p;
+  }
+  daily() {
+    const fs = G.alive(), C = G.chron;
+    for (const r of this.routes.slice()) {
+      const a = G.F(r.a), b = G.F(r.b);
+      if (a && b && !a.gone && !b.gone && this.ok(a, b) && this.path(r)) continue;
+      this.routes.splice(this.routes.indexOf(r), 1);
+      this.caravans = this.caravans.filter(c => c.r !== r);
+      if (a && b && !a.gone && !b.gone) {
+        const why = G.dip.stanceOf(a, b) === 'war' ? 'War closed' : 'Trade dried up on';
+        C.note(`${why} ${r.name} between ${a.name} and ${b.name}.`, 'pol');
+        if (r.n >= 10) C.record(`${why} ${r.name} between ${a.name} and ${b.name} after ${r.n} caravans.`, '', a);
+      }
+    }
+    for (let i = 0; i < fs.length; i++) for (let j = i + 1; j < fs.length; j++) {
+      const a = fs[i], b = fs[j];
+      if (this.routes.some(r => (r.a === a.id && r.b === b.id) || (r.a === b.id && r.b === a.id))) continue;
+      if (!this.ok(a, b) || rnd() > 0.04) continue;
+      const used = new Set(this.routes.map(r => r.name));
+      const r = { id: this.nid++, a: a.id, b: b.id, name: `the ${pick(ROAD_NAMES.filter(n => !used.has(`the ${n} Road`))) || 'New'} Road`, since: G.day, n: 0 };
+      if (!this.path(r)) continue;
+      this.routes.push(r);
+      C.note(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good');
+      C.record(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good', a);
+      if (Math.max(a.age, b.age) >= 3 && this.routes.length <= 3) C.card('Trade', `${upper(r.name)} opens`, `Caravans will carry goods between ${a.name} and ${b.name}.`, a);
+    }
+    for (const r of this.routes) if (rnd() < 0.05) { const a = G.F(r.a), b = G.F(r.b); if (a && b) { a.steward.planTradeRoad(b, r); b.steward.planTradeRoad(a, r); } }
+    for (const r of this.routes) {
+      const n = this.caravans.filter(c => c.r === r).length;
+      if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5, from = back ? r.b : r.a, fr = G.F(from); this.caravans.push({ r, from, to: back ? r.a : r.b, back, d: 0, sp: 1 + (fr ? fr.fx('cart') : 0), era: fr ? fr.era : 0 }); }
+    }
+  }
+  step(dt) {
+    for (const c of this.caravans.slice()) {
+      const p = c.r._p;
+      if (!p) { this.caravans.splice(this.caravans.indexOf(c), 1); continue; }
+      c.d += dt * 1.6 * (c.sp || 1);
+      if (c.d < p.length - 1) continue;
+      this.caravans.splice(this.caravans.indexOf(c), 1);
+      const from = G.F(c.from), to = G.F(c.to);
+      if (!from || !to || from.gone || to.gone) continue;
+      c.r.n = (c.r.n || 0) + 1;
+      // each delivery creates a little wealth at both ends: the goods the receiver is shortest of
+      for (const f of [to, from]) { const k = ['food', 'wood', 'stone'].sort((x, y) => f.res[x] - f.res[y])[0]; f.addRes(k, Math.round((8 + f.age * 2) * (f.hasWonder('colossus') ? 2 : 1) * (f.hasGreat('merchant') ? 1.5 : 1) * (1 + f.fx('goods')))); }
+      G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + 0.5, -100, 100);
+      if (to.tc) View.float(to.tc.x, to.tc.y, '⚖', '#f0d9a0');
+    }
+  }
+  // where a caravan is on its road, in tile coordinates
+  at(c) {
+    const p = c.r._p, d = c.back ? p.length - 1 - c.d : c.d, i = clamp(Math.floor(d), 0, p.length - 1), j = clamp(i + 1, 0, p.length - 1), t = d - i;
+    return { x: p[i].x + (p[j].x - p[i].x) * t, y: p[i].y + (p[j].y - p[i].y) * t };
+  }
+  toJSON() { return { routes: this.routes.map(({ _p, _s, ...r }) => r), nid: this.nid }; }
+}
+
 const Plague = {
   start(f, from) {
     f.plague = ri(9, 15); f.plagueDead = 0;
@@ -1606,7 +2040,7 @@ const Plague = {
     for (const f of fs) {
       if (!f.plague || f.gone) continue;
       f.plague--;
-      f.plagueDead += f.killN(Math.round(f.pop * (0.008 + rnd() * 0.02) + rnd() * 0.8));
+      f.plagueDead += f.killN(Math.round((f.pop * (0.008 + rnd() * 0.02) + rnd() * 0.8) * (1 - f.fx('health'))));
       for (const o of fs) {
         if (o === f || o.gone || o.plague || o.immune > G.day) continue;
         const k = key(f.id, o.id), c = G.dip.contact[k] || 0, st = G.dip.stanceOf(f, o);
@@ -1688,8 +2122,8 @@ class Game {
   constructor() {
     this.v = 4; this.day = 1; this.t = 0; this.speed = 3; this.world = null;
     this.buildings = []; this.cols = []; this.factions = []; this.camps_ = [];
-    this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths();
-    this.nid = 1; this.evCd = 4; this.records = {}; this.over = false; this.startN = 3;
+    this.dip = new Diplomacy(); this.chron = new Chronicle(); this.faiths = new Faiths(); this.trade = new Trade();
+    this.nid = 1; this.evCd = 4; this.records = {}; this.eraFirst = {}; this.over = false; this.startN = 3;
     this._b = null; this._bid = null; this._c = null; this._f = null; this._own = null;
   }
   get year() { return Math.floor((this.day - 1) / YEAR) + 1; }
@@ -1847,22 +2281,39 @@ class Game {
     View.toast(`New land mapped to the ${where}`, 'good');
     this.recomputeTerritory();
   }
+  // look for open, unclaimed land for a new settlement, close to where people already live.
+  // Ruled-out ground is marked once on a grid, so a big old world costs a few ms, not a few hundred.
   scanSite(minFromTc, minFromCamp) {
     const W = this.world, tcs = this.buildings.filter(b => b.type === 'tc'), camps = this.camps();
-    let best = null, bs = -1e9;
-    for (let y = W.y0 + 3; y < W.y1 - 3; y++) for (let x = W.x0 + 3; x < W.x1 - 3; x++) {
-      const C = W.tile(x, y);
-      if (C.t === 3 || C.t === 2 || C.b || C.c || C.own) continue;
-      let open = 0;
-      for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) { const T = W.tile(xx, yy); if (T && T.open && !T.b && !T.own) open++; }
-      if (open < 16) continue;
-      if (tcs.some(b => Math.hypot(b.x - x, b.y - y) < minFromTc)) continue;
-      if (camps.some(c => Math.hypot(c.x - x, c.y - y) < minFromCamp)) continue;
-      if (this.buildings.some(b => Math.abs(b.x - x) < 4 && Math.abs(b.y - y) < 4 && Math.hypot(b.x - x, b.y - y) < 4)) continue;
-      const sc = open + rnd() * 6;
-      if (sc > bs) { bs = sc; best = { x, y }; }
-    }
-    return best;
+    const bad = new Uint8Array(W.w * W.h);
+    const mark = (cx, cy, r) => {
+      const R = Math.ceil(r);
+      for (let y = Math.max(W.y0, cy - R); y <= Math.min(W.y1 - 1, cy + R); y++) for (let x = Math.max(W.x0, cx - R); x <= Math.min(W.x1 - 1, cx + R); x++)
+        if (Math.hypot(x - cx, y - cy) < r) bad[(y - W.y0) * W.w + (x - W.x0)] = 1;
+    };
+    for (const b of this.buildings) mark(b.x, b.y, 4);
+    for (const b of tcs) mark(b.x, b.y, minFromTc);
+    for (const c of camps) mark(c.x, c.y, minFromCamp);
+    const scan = (x0, y0, x1, y1, step) => {
+      let best = null, bs = -1e9;
+      for (let y = Math.max(W.y0 + 3, y0); y < Math.min(W.y1 - 3, y1); y += step) for (let x = Math.max(W.x0 + 3, x0); x < Math.min(W.x1 - 3, x1); x += step) {
+        if (bad[(y - W.y0) * W.w + (x - W.x0)]) continue;
+        const C = W.tile(x, y);
+        if (C.t === 3 || C.t === 2 || C.b || C.c || C.own) continue;
+        let open = 0;
+        for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) { const T = W.tile(xx, yy); if (T && T.open && !T.b && !T.own) open++; }
+        if (open < 16) continue;
+        let near = 1e9; for (const b of tcs) near = Math.min(near, Math.hypot(b.x - x, b.y - y));
+        const sc = open + rnd() * 6 - (near < 1e9 ? near * 0.08 : 0);
+        if (sc > bs) { bs = sc; best = { x, y }; }
+      }
+      return best;
+    };
+    // first within reach of the settled land, then anywhere already mapped
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of [...tcs, ...camps]) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    const m = 22;
+    return (x0 < Infinity && scan(x0 - m, y0 - m, x1 + m, y1 + m, 1)) || scan(W.x0, W.y0, W.x1, W.y1, 2);
   }
   // somewhere to found a new settlement; if the known world is full, scouts push the map outward
   findSite(minFromTc, minFromCamp, from) {
@@ -1888,6 +2339,7 @@ class Game {
     this.dip.daily();
     Plague.daily();
     this.faiths.daily();
+    this.trade.daily();
     Camp.spawnDaily();
     const total = this.cols.length;
     for (const c of this.camps()) c.daily(total);
@@ -1904,6 +2356,7 @@ class Game {
   step(dt) {
     this.t += dt; this.tick = (this.tick || 0) + 1;
     for (const c of this.cols.slice()) c.update(dt);
+    this.trade.step(dt);
     for (const f of this.alive()) {
       f.aiT += dt;
       if (f.aiT >= 1.5) { f.aiT = 0; f.steward.assignJobs(); f.steward.build(); }
@@ -1923,7 +2376,7 @@ class Game {
   // ---------- saving and loading ----------
   toJSON() {
     return { v: 4, at: Date.now(), day: this.day, t: this.t, speed: this.speed, world: this.world, buildings: this.buildings, cols: this.cols, factions: this.factions,
-      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
+      camps: this.camps_, dip: this.dip, chron: this.chron, faiths: this.faiths, trade: this.trade, lastWonder: this.lastWonder, eraFirst: this.eraFirst, nid: this.nid, evCd: this.evCd, records: this.records, over: this.over, startN: this.startN };
   }
   static fresh(n) { const g = new Game(); G = g; g.setup(n); g.history = new History(null, g.world.seed); g.history.capture(); return g; }
   static load(d) {
@@ -1931,7 +2384,7 @@ class Game {
     if (d.v === 3) return Game.migrate(d);
     if (d.v !== 4) return null;
     const g = new Game(); G = g;
-    for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN']) g[k] = d[k];
+    for (const k of ['day', 't', 'speed', 'nid', 'evCd', 'records', 'over', 'startN', 'lastWonder', 'eraFirst']) if (d[k] !== undefined) g[k] = d[k];
     g.savedAt = d.at || 0;
     g.world = World.from(d.world);
     g.history = History.load(g.world.seed);
@@ -1939,7 +2392,7 @@ class Game {
     g.cols = d.cols.map(c => new Colonist(c));
     g.factions = d.factions.map(f => new Settlement(f));
     g.camps_ = d.camps.map(c => new Camp(c));
-    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths);
+    g.dip = new Diplomacy(d.dip); g.chron = new Chronicle(d.chron); g.faiths = new Faiths(d.faiths); g.trade = new Trade(d.trade);
     g.relink();
     return g;
   }
@@ -2040,13 +2493,12 @@ class Renderer {
     g.fillStyle = GRASS[se]; g.fillRect(x, y, 1, 1);
     g.fillStyle = GRASS_DK[se];
     for (let k = 0; k < 4; k++) g.fillRect(x + hv(T.h, k) * 0.85, y + hv(T.h, k + 7) * 0.85, 0.08, 0.08);
-    if (T.foot > 12) {
-      const of = T.own ? G.F(T.own) : null, paved = of && of.age >= 3 && T.foot > 160;
-      const a = Math.min(0.6, (T.foot - 12) / 120);
-      g.fillStyle = paved ? `rgba(150,146,138,${Math.min(0.95, a + 0.2)})` : (se === 3 ? `rgba(170,160,150,${a})` : `rgba(140,108,70,${a})`);
+    if (T.foot > 12 && !T.road) {   // footpaths are only wear in the grass
+      const a = Math.min(0.5, (T.foot - 12) / 140);
+      g.fillStyle = se === 3 ? `rgba(170,160,150,${a})` : `rgba(140,108,70,${a})`;
       g.fillRect(x + 0.04, y + 0.04, 0.92, 0.92);
-      if (paved) { g.strokeStyle = 'rgba(90,88,82,.35)'; g.lineWidth = 0.03; g.strokeRect(x + 0.1, y + 0.1, 0.38, 0.38); g.strokeRect(x + 0.52, y + 0.52, 0.38, 0.38); }
     }
+    if (T.road) this.drawRoad(g, T, x, y, se);
     if (T.t === 1) {
       const n = T.amt > 20 ? 3 : T.amt > 10 ? 2 : 1;
       const spots = [[0.3, 0.35], [0.7, 0.4], [0.5, 0.72]];
@@ -2068,6 +2520,22 @@ class Renderer {
       }
     } else if (T.sap > 0) {
       g.fillStyle = se === 3 ? '#2b5a42' : '#3d7f3a'; g.beginPath(); g.arc(x + 0.5, y + 0.55, 0.08, 0, 7); g.fill();
+    }
+  }
+  // a built road: a band that joins up with neighbouring roads and runs into the buildings it serves
+  drawRoad(g, T, x, y, se) {
+    const W = G.world, k = T.road, w = 0.56, o = (1 - w) / 2;
+    const col = k === 3 ? '#4a4d52' : k === 2 ? (se === 3 ? '#c4c2bc' : '#a7a39a') : (se === 3 ? '#cbbba3' : '#a8834f');
+    const edge = k === 3 ? '#34363a' : k === 2 ? '#7c786f' : '#7d5f38';
+    // join neighbouring road, and run into the buildings roads are built to serve (not every house along the way)
+    const arms = N4.filter(([dx, dy]) => { const N = W.tile(x + dx, y + dy); if (!N) return false; if (N.road) return true; const b = N.b && G.byId(N.b); return !!b && ROAD_ENDS.has(b.type); });
+    const band = (fn) => { fn(o, o, w, w); for (const [dx, dy] of arms) { if (dx === 1) fn(1 - o, o, o, w); if (dx === -1) fn(0, o, o, w); if (dy === 1) fn(o, 1 - o, w, o); if (dy === -1) fn(o, 0, w, o); } };
+    g.fillStyle = edge; band((a, b, c, d) => g.fillRect(x + a - 0.05, y + b - 0.05, c + 0.1, d + 0.1));
+    g.fillStyle = col; band((a, b, c, d) => g.fillRect(x + a, y + b, c, d));
+    if (k === 2) { g.fillStyle = 'rgba(80,76,70,.35)'; for (let i = 0; i < 4; i++) g.fillRect(x + o + hv(T.h, i + 20) * (w - 0.08), y + o + hv(T.h, i + 30) * (w - 0.08), 0.08, 0.06); }
+    if (k === 3) {
+      g.fillStyle = '#e8e2c8';
+      for (const [dx, dy] of arms) { if (dx) g.fillRect(x + (dx > 0 ? 0.6 : 0.1), y + 0.48, 0.3, 0.04); else g.fillRect(x + 0.48, y + (dy > 0 ? 0.6 : 0.1), 0.04, 0.3); }
     }
   }
   renderChunk(cx, cy, res, bake) {
@@ -2108,7 +2576,7 @@ class Renderer {
     const out = new Map(), wint = G.season === 3 ? 1 : 0;
     const bs = G.buildings.filter(b => b.built).sort((p, q) => p.y - q.y);
     for (const b of bs) {
-      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (f && f.age >= 3 ? 1 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
+      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (b.wk ? b.wk.length * 977 : 0) + (f && f.age >= 3 ? 1 : 0) + (f ? f.era * 7919 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
       for (let cy = Math.floor((b.y - 0.6) / CS); cy <= Math.floor((b.y + 1.4) / CS); cy++) for (let cx = Math.floor((b.x - 0.2) / CS); cx <= Math.floor((b.x + 1.2) / CS); cx++) {
         const id = cx + ',' + cy;
         let e = out.get(id);
@@ -2152,7 +2620,7 @@ class Renderer {
   // each look of a building (type, stage, winter, owner colour) is painted once per zoom level and then stamped
   drawBuilding(g, b) {
     const f = G.F(b.f), type = !b.built && b.from ? b.from : b.type, res = this.sres;
-    const id = `${type}|${b.built ? 1 : b.from ? 2 : 0}|${G.season === 3 ? 1 : 0}|${f ? f.color + (f.age >= 3 ? 1 : 0) : ''}|${res}`;
+    const id = `${type}${b.wk || ''}|${b.built ? 1 : b.from ? 2 : 0}|${G.season === 3 ? 1 : 0}|${f ? f.color + (f.age >= 3 ? 1 : 0) + 'e' + f.era : ''}|${res}`;
     let s = this.sprites.get(id);
     if (!s) {
       if (this.sprites.size > 600) this.sprites.clear();
@@ -2171,56 +2639,123 @@ class Renderer {
     }
   }
   paintBuilding(g, b, x, y) {
-    const se = G.season, w3 = se === 3, f = G.F(b.f);
+    const se = G.season, w3 = se === 3, f = G.F(b.f), era = f ? f.era : 0, L = ERA_LOOK[era];
     const type = !b.built && b.from ? b.from : b.type;
+    // industrial chimneys and smoke
+    const smoke = (sx, sy) => { g.fillStyle = '#5a4a40'; g.fillRect(sx, sy, 0.1, 0.22); g.fillStyle = 'rgba(200,200,205,.55)'; g.beginPath(); g.arc(sx + 0.08, sy - 0.08, 0.08, 0, 7); g.arc(sx + 0.18, sy - 0.2, 0.1, 0, 7); g.fill(); };
     g.save();
     if (!b.built && !b.from) g.globalAlpha = 0.45;
     g.fillStyle = 'rgba(0,0,0,.16)'; if (type !== 'farm' && type !== 'dock' && type !== 'market') g.fillRect(x + 0.1, y + 0.84, 0.84, 0.1);
     if (type === 'tc') {
-      g.fillStyle = f && f.age >= 3 ? '#a9a196' : '#7b5236'; g.fillRect(x + 0.1, y + 0.42, 0.8, 0.44);
-      g.fillStyle = '#a3402c'; tri(g, x + 0.02, y + 0.46, x + 0.5, y + 0.08, x + 0.98, y + 0.46);
+      if (era >= 6) {   // a city hall: a tall block with a clock
+        g.fillStyle = L.wall; g.fillRect(x + 0.1, y + 0.1, 0.8, 0.76);
+        g.fillStyle = L.win; for (let r = 0; r < 3; r++) for (let k = 0; k < 4; k++) g.fillRect(x + 0.16 + k * 0.18, y + 0.18 + r * 0.14, 0.1, 0.08);
+        g.fillStyle = L.roof; g.fillRect(x + 0.06, y + 0.04, 0.88, 0.08);
+        g.fillStyle = '#f4f4f0'; g.beginPath(); g.arc(x + 0.5, y + 0.02, 0.1, 0, 7); g.fill();
+      } else {
+      g.fillStyle = era >= 5 ? L.wall : f && (f.age >= 3 || era >= 3) ? '#a9a196' : '#7b5236'; g.fillRect(x + 0.1, y + 0.42, 0.8, 0.44);
+      g.fillStyle = era >= 4 ? L.roof : '#a3402c'; tri(g, x + 0.02, y + 0.46, x + 0.5, y + 0.08, x + 0.98, y + 0.46);
       if (w3) { g.fillStyle = SNOW; tri(g, x + 0.2, y + 0.3, x + 0.5, y + 0.08, x + 0.8, y + 0.3); }
+      }
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.42, y + 0.6, 0.16, 0.26);
       g.fillStyle = '#f0c75a'; g.fillRect(x + 0.18, y + 0.54, 0.12, 0.1); g.fillRect(x + 0.7, y + 0.54, 0.12, 0.1);
       if (f) {
         g.strokeStyle = '#3a2618'; g.lineWidth = 0.05; g.beginPath(); g.moveTo(x + 0.5, y + 0.1); g.lineTo(x + 0.5, y - 0.5); g.stroke();
         g.fillStyle = f.color; g.fillRect(x + 0.52, y - 0.5, 0.4, 0.26);
       }
+    } else if (type === 'wonder') {
+      const k = b.wk || 'library', gold = '#e0b33a';
+      if (k === 'library') {
+        g.fillStyle = '#e6dcc0'; g.fillRect(x - 0.1, y + 0.3, 1.2, 0.62);
+        g.fillStyle = '#cbbd96'; tri(g, x - 0.16, y + 0.32, x + 0.5, y - 0.1, x + 1.16, y + 0.32);
+        g.fillStyle = '#b9a97f'; for (let i = 0; i < 4; i++) g.fillRect(x - 0.02 + i * 0.3, y + 0.36, 0.1, 0.52);
+        g.fillStyle = '#5a4630'; g.fillRect(x - 0.12, y + 0.88, 1.24, 0.08);
+      } else if (k === 'colossus') {
+        g.fillStyle = '#8f8a80'; g.fillRect(x + 0.18, y + 0.62, 0.64, 0.32);
+        g.fillStyle = gold; g.fillRect(x + 0.4, y + 0.0, 0.2, 0.64); g.fillRect(x + 0.36, y + 0.62, 0.08, 0.02);
+        g.beginPath(); g.arc(x + 0.5, y - 0.08, 0.12, 0, 7); g.fill();
+        g.fillRect(x + 0.58, y - 0.46, 0.07, 0.5);
+        g.fillStyle = '#ffdf7a'; g.beginPath(); g.arc(x + 0.615, y - 0.5, 0.09, 0, 7); g.fill();
+      } else if (k === 'gardens') {
+        g.fillStyle = '#b89a6a'; g.fillRect(x - 0.1, y + 0.62, 1.2, 0.32); g.fillRect(x + 0.08, y + 0.3, 0.84, 0.34); g.fillRect(x + 0.26, y + 0.0, 0.48, 0.32);
+        g.fillStyle = w3 ? '#c9d6c5' : '#4f9d4c'; g.fillRect(x - 0.1, y + 0.58, 1.2, 0.08); g.fillRect(x + 0.08, y + 0.26, 0.84, 0.08); g.fillRect(x + 0.26, y - 0.04, 0.48, 0.08);
+        g.fillStyle = '#7ec8e3'; g.fillRect(x + 0.46, y + 0.04, 0.08, 0.9);
+      } else if (k === 'wall') {
+        g.fillStyle = '#9d988e'; g.fillRect(x - 0.2, y + 0.34, 1.4, 0.6);
+        g.fillStyle = '#b6b1a6'; for (let i = 0; i < 5; i++) g.fillRect(x - 0.2 + i * 0.3, y + 0.2, 0.18, 0.16);
+        g.fillStyle = '#7d786e'; g.fillRect(x + 0.32, y + 0.0, 0.36, 0.94); g.fillStyle = '#b6b1a6'; g.fillRect(x + 0.3, y - 0.1, 0.4, 0.12);
+        g.fillStyle = '#3a2618'; g.fillRect(x + 0.42, y + 0.58, 0.16, 0.36);
+      } else if (k === 'temple') {
+        g.fillStyle = '#f1edf9'; g.fillRect(x + 0.22, y - 0.1, 0.56, 1.04); g.fillRect(x + 0.04, y + 0.5, 0.92, 0.44);
+        g.fillStyle = '#9b7fd9'; tri(g, x + 0.18, y - 0.08, x + 0.5, y - 0.56, x + 0.82, y - 0.08);
+        g.fillStyle = gold; g.beginPath(); g.arc(x + 0.5, y - 0.56, 0.06, 0, 7); g.fill();
+        g.fillStyle = '#6b58a8'; g.fillRect(x + 0.42, y + 0.68, 0.16, 0.26);
+      } else {
+        g.fillStyle = '#c97b5a'; g.beginPath(); g.ellipse(x + 0.5, y + 0.56, 0.68, 0.4, 0, 0, 7); g.fill();
+        g.fillStyle = w3 ? '#e8ecee' : '#d8c38e'; g.beginPath(); g.ellipse(x + 0.5, y + 0.6, 0.42, 0.22, 0, 0, 7); g.fill();
+        g.fillStyle = '#9c5a3e'; for (let i = 0; i < 6; i++) g.fillRect(x - 0.12 + i * 0.25, y + 0.26, 0.06, 0.1);
+      }
+      if (f) { g.fillStyle = f.color; tri(g, x + 1.02, y - 0.3, x + 1.18, y - 0.24, x + 1.02, y - 0.18); g.fillStyle = '#3a2618'; g.fillRect(x + 1.0, y - 0.3, 0.025, 0.4); }
     } else if (type === 'hut') {
-      g.fillStyle = '#9a6b44'; g.fillRect(x + 0.22, y + 0.48, 0.56, 0.38);
-      g.fillStyle = '#5f4128'; tri(g, x + 0.14, y + 0.5, x + 0.5, y + 0.18, x + 0.86, y + 0.5);
+      g.fillStyle = L.wall; g.fillRect(x + 0.22, y + 0.48, 0.56, 0.38);
+      g.fillStyle = L.roof; tri(g, x + 0.14, y + 0.5, x + 0.5, y + 0.18, x + 0.86, y + 0.5);
       if (w3) { g.fillStyle = SNOW; tri(g, x + 0.28, y + 0.38, x + 0.5, y + 0.18, x + 0.72, y + 0.38); }
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.44, y + 0.64, 0.12, 0.22);
     } else if (type === 'house') {
-      g.fillStyle = '#c9a57a'; g.fillRect(x + 0.14, y + 0.36, 0.72, 0.5);
-      g.strokeStyle = '#5c3d26'; g.lineWidth = 0.05; g.strokeRect(x + 0.14, y + 0.36, 0.72, 0.5);
-      g.beginPath(); g.moveTo(x + 0.14, y + 0.6); g.lineTo(x + 0.86, y + 0.6); g.stroke();
-      g.fillStyle = '#8a3a28'; tri(g, x + 0.06, y + 0.4, x + 0.5, y + 0.06, x + 0.94, y + 0.4);
+      if (era >= 5) smoke(x + 0.66, y + 0.08);
+      g.fillStyle = L.wall; g.fillRect(x + 0.14, y + 0.36, 0.72, 0.5);
+      if (era <= 3) { g.strokeStyle = '#5c3d26'; g.lineWidth = 0.05; g.strokeRect(x + 0.14, y + 0.36, 0.72, 0.5);
+      g.beginPath(); g.moveTo(x + 0.14, y + 0.6); g.lineTo(x + 0.86, y + 0.6); g.stroke(); }
+      g.fillStyle = L.roof; tri(g, x + 0.06, y + 0.4, x + 0.5, y + 0.06, x + 0.94, y + 0.4);
       if (w3) { g.fillStyle = SNOW; tri(g, x + 0.24, y + 0.26, x + 0.5, y + 0.06, x + 0.76, y + 0.26); }
-      g.fillStyle = '#f0c75a'; g.fillRect(x + 0.24, y + 0.44, 0.12, 0.1); g.fillRect(x + 0.64, y + 0.44, 0.12, 0.1);
+      g.fillStyle = L.win; g.fillRect(x + 0.24, y + 0.44, 0.12, 0.1); g.fillRect(x + 0.64, y + 0.44, 0.12, 0.1);
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.44, y + 0.66, 0.12, 0.2);
+    } else if (type === 'manor' && era >= 6) {   // an apartment tower
+      g.fillStyle = L.wall; g.fillRect(x + 0.14, y - 0.4, 0.72, 1.28);
+      g.fillStyle = '#9aa4ad'; g.fillRect(x + 0.7, y - 0.4, 0.16, 1.28);
+      g.fillStyle = L.roof; g.fillRect(x + 0.1, y - 0.48, 0.8, 0.1);
+      g.fillStyle = L.win; for (let r = 0; r < 6; r++) for (let k = 0; k < 3; k++) g.fillRect(x + 0.2 + k * 0.17, y - 0.3 + r * 0.17, 0.1, 0.1);
+      g.fillStyle = '#3a3f45'; g.fillRect(x + 0.42, y + 0.72, 0.16, 0.16);
     } else if (type === 'manor') {
-      g.fillStyle = '#b3aa9c'; g.fillRect(x + 0.1, y + 0.24, 0.8, 0.64);
-      g.fillStyle = '#4b5561'; g.fillRect(x + 0.06, y + 0.14, 0.88, 0.14);
+      if (era >= 5) smoke(x + 0.2, y - 0.02);
+      g.fillStyle = era >= 4 ? L.wall : '#b3aa9c'; g.fillRect(x + 0.1, y + 0.24, 0.8, 0.64);
+      g.fillStyle = era >= 4 ? L.roof : '#4b5561'; g.fillRect(x + 0.06, y + 0.14, 0.88, 0.14);
       if (w3) { g.fillStyle = SNOW; g.fillRect(x + 0.06, y + 0.12, 0.88, 0.06); }
-      g.fillStyle = '#f0c75a';
+      g.fillStyle = L.win;
       for (let r = 0; r < 2; r++) for (let k = 0; k < 3; k++) g.fillRect(x + 0.18 + k * 0.24, y + 0.34 + r * 0.22, 0.12, 0.12);
       g.fillStyle = '#3a2618'; g.fillRect(x + 0.44, y + 0.72, 0.12, 0.16);
     } else if (type === 'farm') {
       g.fillStyle = w3 ? '#d9e0e3' : '#7a5a3a'; g.fillRect(x + 0.04, y + 0.04, 0.92, 0.92);
       g.strokeStyle = ['#9bd06a', '#d8c046', '#e6a43a', '#b9c3c8'][se]; g.lineWidth = 0.09;
-      for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(x + 0.12, y + 0.2 + k * 0.2); g.lineTo(x + 0.88, y + 0.2 + k * 0.2); g.stroke(); }
+      for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(x + 0.12, y + 0.2 + k * 0.2); g.lineTo(x + (era >= 5 ? 0.68 : 0.88), y + 0.2 + k * 0.2); g.stroke(); }
+      if (era >= 5) { g.fillStyle = era >= 6 ? '#d7dde2' : '#9c4a36'; g.fillRect(x + 0.72, y + 0.1, 0.2, 0.7); g.fillStyle = era >= 6 ? '#9aa6b0' : '#5a5f66'; g.beginPath(); g.arc(x + 0.82, y + 0.1, 0.1, Math.PI, 0); g.fill(); }
     } else if (type === 'dock') {
       g.fillStyle = '#a07a4f'; g.fillRect(x + 0.12, y + 0.3, 0.76, 0.4);
       g.strokeStyle = '#6e5234'; g.lineWidth = 0.04;
       for (let k = 1; k < 5; k++) { g.beginPath(); g.moveTo(x + 0.12 + k * 0.15, y + 0.3); g.lineTo(x + 0.12 + k * 0.15, y + 0.7); g.stroke(); }
       g.fillStyle = '#4a3420'; g.fillRect(x + 0.14, y + 0.66, 0.08, 0.14); g.fillRect(x + 0.78, y + 0.66, 0.08, 0.14);
+    } else if (type === 'store' && era >= 5) {   // a factory with a sawtooth roof
+      smoke(x + 0.74, y - 0.12);
+      g.fillStyle = L.wall; g.fillRect(x + 0.06, y + 0.4, 0.88, 0.48);
+      g.fillStyle = L.roof; for (let k = 0; k < 3; k++) tri(g, x + 0.06 + k * 0.29, y + 0.42, x + 0.06 + k * 0.29, y + 0.22, x + 0.35 + k * 0.29, y + 0.42);
+      g.fillStyle = L.win; for (let k = 0; k < 4; k++) g.fillRect(x + 0.12 + k * 0.2, y + 0.54, 0.12, 0.12);
+      g.fillStyle = '#2f3438'; g.fillRect(x + 0.42, y + 0.7, 0.16, 0.18);
     } else if (type === 'store') {
-      g.fillStyle = '#8d7b58'; g.fillRect(x + 0.1, y + 0.36, 0.8, 0.5);
+      g.fillStyle = era >= 4 ? L.wall : '#8d7b58'; g.fillRect(x + 0.1, y + 0.36, 0.8, 0.5);
       g.fillStyle = '#54452f'; g.fillRect(x + 0.04, y + 0.26, 0.92, 0.14);
       if (w3) { g.fillStyle = SNOW; g.fillRect(x + 0.04, y + 0.24, 0.92, 0.06); }
       g.fillStyle = '#c0954f'; g.fillRect(x + 0.18, y + 0.62, 0.2, 0.2); g.fillRect(x + 0.42, y + 0.66, 0.16, 0.16);
       g.fillStyle = '#3a2f20'; g.fillRect(x + 0.64, y + 0.52, 0.18, 0.34);
+    } else if (type === 'tower' && era >= 6) {   // a radar post
+      g.fillStyle = '#7d8a74'; g.fillRect(x + 0.2, y + 0.56, 0.6, 0.32);
+      g.strokeStyle = '#c8ced3'; g.lineWidth = 0.05; g.beginPath(); g.moveTo(x + 0.5, y + 0.56); g.lineTo(x + 0.5, y - 0.1); g.stroke();
+      g.fillStyle = '#e6eaee'; g.beginPath(); g.ellipse(x + 0.5, y - 0.12, 0.24, 0.09, -0.3, 0, 7); g.fill();
+      g.fillStyle = f ? f.color : '#c0392b'; g.fillRect(x + 0.26, y + 0.64, 0.14, 0.1);
+    } else if (type === 'tower' && era >= 4) {   // a low bastion with a cannon
+      g.fillStyle = '#8a929a'; g.beginPath(); g.moveTo(x + 0.06, y + 0.9); g.lineTo(x + 0.16, y + 0.4); g.lineTo(x + 0.84, y + 0.4); g.lineTo(x + 0.94, y + 0.9); g.closePath(); g.fill();
+      g.fillStyle = '#a7aeb5'; g.fillRect(x + 0.14, y + 0.36, 0.72, 0.08);
+      g.fillStyle = '#2b2b2b'; g.save(); g.translate(x + 0.5, y + 0.36); g.rotate(-0.35); g.fillRect(0, -0.05, 0.4, 0.1); g.restore();
+      g.fillStyle = f ? f.color : '#c0392b'; tri(g, x + 0.2, y + 0.06, x + 0.4, y + 0.12, x + 0.2, y + 0.18); g.fillStyle = '#4a3420'; g.fillRect(x + 0.18, y + 0.06, 0.03, 0.32);
     } else if (type === 'tower') {
       g.fillStyle = '#8a929a'; g.fillRect(x + 0.3, y + 0.24, 0.4, 0.66);
       g.fillStyle = '#a7aeb5';
@@ -2230,8 +2765,8 @@ class Renderer {
       g.strokeStyle = '#4a3420'; g.lineWidth = 0.04; g.beginPath(); g.moveTo(x + 0.5, y + 0.14); g.lineTo(x + 0.5, y - 0.12); g.stroke();
       g.fillStyle = f ? f.color : '#c0392b'; tri(g, x + 0.52, y - 0.12, x + 0.76, y - 0.05, x + 0.52, y + 0.02);
     } else if (type === 'barracks') {
-      g.fillStyle = '#7d6b55'; g.fillRect(x + 0.04, y + 0.4, 0.92, 0.48);
-      g.fillStyle = '#4a3a2c'; g.fillRect(x + 0.02, y + 0.3, 0.96, 0.14);
+      g.fillStyle = era >= 5 ? '#6f7a5c' : '#7d6b55'; g.fillRect(x + 0.04, y + 0.4, 0.92, 0.48);
+      g.fillStyle = era >= 5 ? '#454d3a' : '#4a3a2c'; g.fillRect(x + 0.02, y + 0.3, 0.96, 0.14);
       g.fillStyle = f ? f.color : '#b5312a'; g.beginPath(); g.arc(x + 0.5, y + 0.62, 0.13, 0, 7); g.fill();
       g.fillStyle = '#e8c45a'; g.fillRect(x + 0.47, y + 0.52, 0.06, 0.2);
     } else if (type === 'chapel') {
@@ -2321,7 +2856,8 @@ class Renderer {
     if (Replay.active) { b = Replay.box(); fitWorld = true; }
     else if (z && z.kind === 'f') { const f = G.F(z.id); if (f && !f.gone) b = Renderer.box(f.buildings, 2); else UI.zoom = null; }
     else if (z && z.kind === 'c') { const c = G.camps_.find(x => x.id === z.id); if (c && !c.gone) b = { x0: c.x - 4, y0: c.y - 4, x1: c.x + 5, y1: c.y + 5 }; else UI.zoom = null; }
-    if (!b && UI.view === 'all') { b = { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
+    // the whole world means everywhere people live, not every empty mile the scouts ever mapped
+    if (!b && UI.view === 'all') { b = Renderer.box(G.buildings.concat(G.camps()), 8) || { x0: W.x0, y0: W.y0, x1: W.x1, y1: W.y1 }; fitWorld = true; }
     if (!b) {
       const all = Renderer.box(G.buildings.concat(G.camps()), 3);
       if (all && all.x1 - all.x0 <= 56 && all.y1 - all.y0 <= 70) b = all;
@@ -2339,6 +2875,30 @@ class Renderer {
     const x = w >= W.w ? W.x0 + (W.w - w) / 2 : clamp(cx - w / 2, W.x0, W.x1 - w);
     const y = h >= W.h ? W.y0 + (W.h - h) / 2 : clamp(cy - h / 2, W.y0, W.y1 - h);
     return { x, y, w, h };
+  }
+  // caravans as small carts, trains or trucks: a handful of draw calls however busy trade gets
+  drawRoads(ctx, k, dpr, inView) {
+    const T = G.trade;
+    if (!T.routes.length) return;
+    // the roads themselves are built on the ground (see drawRoad); this draws only the caravans on them
+    const s = Math.max(0.32, 4 * dpr / k);
+    for (const c of T.caravans) {
+      if (!c.r._p) continue;
+      const q = T.at(c);
+      if (!inView(q)) continue;
+      const f = G.F(c.from), col = f ? f.color : '#e8d9b0', x = q.x + 0.5, y = q.y + 0.5;
+      if (c.era >= 6) {   // a truck
+        ctx.fillStyle = '#eef0f2'; ctx.fillRect(x - s * 0.7, y - s * 0.38, s * 1.0, s * 0.76);
+        ctx.fillStyle = col; ctx.fillRect(x + s * 0.32, y - s * 0.32, s * 0.4, s * 0.64);
+      } else if (c.era >= 5) {   // a little train: engine and two cars
+        ctx.fillStyle = '#1e1e22'; ctx.fillRect(x - s * 1.3, y - s * 0.4, s * 2.6, s * 0.8);
+        ctx.fillStyle = col; ctx.fillRect(x - s * 1.2, y - s * 0.28, s * 0.7, s * 0.56); ctx.fillRect(x - s * 0.4, y - s * 0.28, s * 0.7, s * 0.56);
+        ctx.fillStyle = '#c94b3a'; ctx.fillRect(x + s * 0.45, y - s * 0.3, s * 0.75, s * 0.6);
+      } else {
+        ctx.fillStyle = '#2a1d12'; ctx.fillRect(x - s * 0.6, y - s * 0.45, s * 1.2, s * 0.9);
+        ctx.fillStyle = col; ctx.fillRect(x - s * 0.45, y - s * 0.32, s * 0.9, s * 0.64);
+      }
+    }
   }
   drawLabels() {
     const ctx = this.ctx, cam = this.cam, kc = this.cv.width / cam.w / this.dpr, cw = this.cv.width / this.dpr, chh = this.cv.height / this.dpr;
@@ -2378,6 +2938,7 @@ class Renderer {
     const sorted = G.buildings.filter(b => !b.built && inView(b)).sort((p, q) => p.y - q.y);
     for (const b of sorted) this.drawBuilding(ctx, b);
     for (const c of G.camps()) if (inView(c)) this.drawCamp(c, rdt);
+    this.drawRoads(ctx, k, dpr, inView);
     const rad = Math.max(0.14, 2.4 * dpr / k), groups = new Map(), loads = [];
     let picked = null;
     for (const c of G.cols) {
@@ -2463,7 +3024,7 @@ class Interface {
   }
   setTab(t) {
     this.tab = t;
-    ['realm', 'pol', 'log'].forEach(n => { $('tab-' + n).setAttribute('aria-selected', String(n === t)); $('pane-' + n).hidden = n !== t; });
+    ['realm', 'pol', 'tech', 'log'].forEach(n => { $('tab-' + n).setAttribute('aria-selected', String(n === t)); $('pane-' + n).hidden = n !== t; });
     G.chron.dirty = true; this.html = {}; this.refresh();
   }
   setHtml(id, html) { if (this.html[id] !== html) { $(id).innerHTML = html; this.html[id] = html; } }
@@ -2509,9 +3070,10 @@ class Interface {
     if (T.c) { const c = G.camps_.find(x => x.id === T.c); if (c) return `<b>${c.name}</b> · barbarian camp · strength ${Math.floor(c.str)}`; }
     if (T.b) {
       const b = G.byId(T.b); if (!b) return '';
-      const B = BUILD[b.type], f = b.owner;
+      const B = b.wk ? { ...BUILD.wonder, name: upper(WONDERS[b.wk].name) } : BUILD[b.type], f = b.owner;
+      if (b.wk && b.built) return `<b>${B.name}</b> of ${f.name} · a wonder of the world that brings ${WONDERS[b.wk].does}`;
       if (!b.built) return `<b>${B.name}</b> of ${f.name} · ${b.from ? 'being rebuilt' : 'under construction'}, ${Math.floor(Math.min(1, b.prog / B.time) * 100)}%`;
-      if (b.type === 'tc') return `<b>${f.name}</b> · ${AGES[f.age].name.toLowerCase()} of ${f.pop} · defense ${f.defense}`;
+      if (b.type === 'tc') return `<b>${f.name}</b> · ${AGES[f.age].name.toLowerCase()} of ${f.pop} · ${ERAS[f.era]} · defense ${f.defense}`;
       if (B.slots) return `<b>${B.name}</b> of ${f.name} · yields ${f.farmYield(b)} a trip`;
       if (B.house) return `<b>${B.name}</b> of ${f.name} · home for ${B.house}`;
       if (B.def) return `<b>${B.name}</b> of ${f.name} · adds ${B.def} defense`;
@@ -2521,7 +3083,8 @@ class Interface {
     if (T.t === 2) return `<b>Rock</b> · ${T.amt} stone left${land}`;
     if (T.t === 3) return '<b>Lake</b>';
     if (T.sap) return `<b>Saplings</b> · forest again in ${T.sap} days${land}`;
-    return `<b>${T.foot > 20 ? 'Footpath' : 'Meadow'}</b>${land}`;
+    if (T.road) return `<b>${ROAD_KINDS[T.road]}</b> · walkers move ${Math.round((T.speed - 1) * 100)}% faster${land}`;
+    return `<b>${T.foot > 20 ? 'Footpath' : 'Meadow'}</b>${T.foot > 20 ? ' · worn by walkers, no faster' : ''}${land}`;
   }
   tap(e) {
     if (!G || !R.cam) return;
@@ -2551,7 +3114,8 @@ class Interface {
   wire() {
     R.cv.addEventListener('click', e => this.tap(e));
     [0, 1, 3, 10].forEach(n => $('sp' + n).addEventListener('click', () => this.setSpeed(n)));
-    ['realm', 'pol', 'log'].forEach(n => $('tab-' + n).addEventListener('click', () => this.setTab(n)));
+    ['realm', 'pol', 'tech', 'log'].forEach(n => $('tab-' + n).addEventListener('click', () => this.setTab(n)));
+    $('techrealms').addEventListener('click', e => { const b = e.target.closest('button.town'); if (b) { this.sel = +b.dataset.id; this.refresh(); } });
     $('realm').addEventListener('click', e => {
       const b = e.target.closest('button.town');
       if (!b) return;
@@ -2612,7 +3176,7 @@ class Interface {
       const why = (f.moodWhy || []).join(', ');
       const rels = G.alive().filter(o => o !== f).map(o => `${STANCE[G.dip.stanceOf(f, o)].toLowerCase()} with ${o.name}`).join('; ');
       const reign = Math.floor(f.ruler.years);
-      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
+      $('steward').innerHTML = `<b>Ruler:</b> ${f.title}, ${f.ruler.trait}, ${reign ? `reigning ${reign} year${reign > 1 ? 's' : ''}` : 'newly crowned'}.${f.plague ? ` <b>${upper(f.plagueName)}</b> is in the streets.` : ''}<br><b>Steward:</b> ${f.note}<br><b>Mood:</b> ${Math.round(f.mood)}, ${moodLabel(f.mood)}${why ? ` (${why})` : ''}.${rels ? `<br><b>Standing:</b> ${rels}.` : ''}${f.great ? `<br><b>Great ${GREATS[f.great.kind].what}:</b> ${f.great.name} ${f.great.ep}, bringing ${GREATS[f.great.kind].does}.` : ''}${f.buildings.some(b => b.type === 'wonder' && b.built) ? `<br><b>Wonders:</b> ${f.buildings.filter(b => b.type === 'wonder' && b.built).map(b => upper(WONDERS[b.wk].name)).join(', ')}.` : ''}<br><b>Era:</b> ${ERAS[f.era]}${f.study ? `, studying ${TECHS[f.study].name}` : ''}.<br><b>Faith:</b> ${f.faith ? `${G.faiths.name(f.faith)}${G.faiths.holy(f) ? ' (its holy city)' : ''}, ${f.zeal >= 65 ? 'zealous' : f.zeal >= 40 ? 'devout' : 'lukewarm'}` : 'none yet; the first chapel will bring one'}. <b>Culture:</b> ${f.culture}.`;
       for (const k of Object.keys(JOBS)) {
         const n = f.people.filter(o => o.job === k).length;
         $('n-' + k).textContent = n;
@@ -2621,11 +3185,26 @@ class Interface {
       const sites = f.buildings.filter(b => !b.built);
       this.setHtml('sites', sites.length ? sites.map(b => {
         const p = Math.min(1, b.prog / BUILD[b.type].time);
-        return `<div class="site"><span>${BUILD[b.type].name}${b.from ? ' (rebuild)' : ''}</span><div class="bar"><i style="width:${Math.round(p * 100)}%"></i></div><span>${Math.floor(p * 100)}%</span></div>`;
+        return `<div class="site"><span>${b.wk ? upper(WONDERS[b.wk].name) : BUILD[b.type].name}${b.from ? ' (rebuild)' : ''}</span><div class="bar"><i style="width:${Math.round(p * 100)}%"></i></div><span>${Math.floor(p * 100)}%</span></div>`;
       }).join('') : '<div class="steward">Nothing under construction right now.</div>');
       const counts = {};
       for (const b of f.buildings) if (b.built) counts[b.type] = (counts[b.type] || 0) + 1;
       this.setHtml('counts', Object.keys(BUILD).filter(k => counts[k]).map(k => `<div class="count"><span>${BUILD[k].name}</span><b>${counts[k]}</b></div>`).join(''));
+    } else if (this.tab === 'tech') {
+      const fs = G.alive().sort((a, b) => b.techs.length - a.techs.length || b.pop - a.pop);
+      this.setHtml('techrealms', fs.map(o => {
+        const st = o.study ? TECHS[o.study] : null, p = st ? Math.min(1, (o.sci || 0) / o.techCost(o.study)) : 1;
+        return `<button class="town" data-id="${o.id}" aria-pressed="${o === f}"><span class="flag" style="background:${o.color}"></span><span>${o.name}<div class="tbar"><i style="width:${Math.round(p * 100)}%"></i></div></span><span class="tp">${st ? `${st.name} ${Math.floor(p * 100)}%` : 'knows it all'}</span><span class="chip home">${ERAS[o.era]}</span></button>`;
+      }).join(''));
+      this.setHtml('tree', ERAS.map((nm, e) => {
+        const r = G.eraFirst && G.eraFirst[e], here = f.era === e;
+        const note = here ? `<small class="here">${f.name} is here</small>` : r ? `<small>first: ${r.n}, year ${Math.floor((r.d - 1) / YEAR) + 1}</small>` : e ? '<small>no realm yet</small>' : '';
+        const cells = Object.keys(TECHS).filter(t => TECHS[t].era === e).map(t => {
+          const T = TECHS[t], who = fs.filter(o => o.knows(t)), cls = f.knows(t) ? 'known' : f.study === t ? 'now' : '';
+          return `<div class="tech ${cls}"><b>${f.knows(t) ? '✓ ' : ''}${T.name}</b><span>${upper(T.does)}</span><span class="dots">${who.slice(0, 12).map(o => `<i style="background:${o.color}" title="${o.name}"></i>`).join('')}</span></div>`;
+        }).join('');
+        return `<section class="era"><h3>${nm}${note}</h3><div class="ts">${cells}</div></section>`;
+      }).join(''));
     } else if (this.tab === 'pol') {
       const fs = G.alive(), rows = [];
       for (let i = 0; i < fs.length; i++) for (let j = i + 1; j < fs.length; j++) {
@@ -2639,10 +3218,11 @@ class Interface {
         const ms = fs.filter(o => o.faith === x.id), h = G.F(x.holy);
         return { x, ms, pop: ms.reduce((n, o) => n + o.pop, 0), h };
       }).filter(r => r.ms.length).sort((p, q) => q.pop - p.pop);
+      this.setHtml('roads', G.trade.routes.length ? G.trade.routes.map(r => { const a = G.F(r.a), b = G.F(r.b); return `<div class="faith"><span class="who"><i style="background:#e8cf8a"></i>${upper(r.name)}</span><span class="tp">${a ? a.name : '?'} ⇄ ${b ? b.name : '?'} · ${r.n || 0} caravan${r.n === 1 ? '' : 's'} so far</span></div>`; }).join('') : '<div class="steward">No roads yet. Two friendly realms with markets will open one.</div>');
       this.setHtml('faiths', faiths.length ? faiths.map(r => `<div class="faith"><span class="who"><i style="background:${r.x.color}"></i>${r.x.name}</span><span class="tp">${r.pop} faithful in ${r.ms.length} realm${r.ms.length > 1 ? 's' : ''}${r.h ? ` · holy city ${r.h.name}` : ''}</span></div>`).join('') : '<div class="steward">No faith yet. The first realm to build a chapel will found one.</div>');
       if (G.chron.dirty) {
         const ul = $('pollog'); ul.textContent = '';
-        for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border/.test(e.text)).slice(0, 12)) {
+        for (const e of G.chron.log.filter(e => e.k === 'pol' || /war|peace|alliance|allies|conquered|raided|border|Road/.test(e.text)).slice(0, 12)) {
           const li = document.createElement('li'); li.className = e.k;
           const sp = document.createElement('span'); sp.textContent = 'Day ' + e.d;
           li.appendChild(sp); li.appendChild(document.createTextNode(e.text)); ul.appendChild(li);
@@ -2651,6 +3231,7 @@ class Interface {
       }
     } else if (G.chron.dirty) {
       $('miles').innerHTML = AGES.slice(1).map((a, i) => { const r = G.records[i + 1]; return `<span class="mile${r ? ' done' : ''}">First ${a.name.toLowerCase()}${r ? `: ${r.n}` : ''}</span>`; }).join('')
+        + ERAS.slice(1).map((nm, i) => { const r = G.eraFirst && G.eraFirst[i + 1]; return `<span class="mile${r ? ' done' : ''}">First to the ${nm}${r ? `: ${r.n}` : ''}</span>`; }).join('')
         + `<span class="mile done">Known world: ${W.w} × ${W.h}</span>`;
       const hist = $('hist'); hist.textContent = '';
       let ys = null, ul2 = null;
@@ -2891,7 +3472,7 @@ document.addEventListener('visibilitychange', () => {
   else if (hiddenAt) { const s = (Date.now() - hiddenAt) / 1000; hiddenAt = 0; if (s > 20) Away.start(s); }
 });
 window.claude?.hot?.snapshot?.(() => ({ save: JSON.stringify(G) }));
-window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter, Away, Replay };
+window.__ev = { get G() { return G; }, Game, restart, Plague, R, UI, meter, Away, Replay, TECHS };
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
 })();
 </script>
