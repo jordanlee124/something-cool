@@ -512,7 +512,15 @@ const LUX_KEYS = Object.keys(LUX);
 const LUX_OF = { vineyard: 'wine', saltpan: 'salt', silkfarm: 'silk', spicegarden: 'spice' };
 // a day's pay for each trade; households live on their members' wages
 const WAGE = { farmer: 0.7, woodcutter: 0.8, forester: 0.9, miner: 1.1, builder: 1.4, artisan: 2.4, miller: 1.2, baker: 1.5, sawyer: 1.3, smith: 2.0, grower: 1.0 };
-const CLASS = ['poor', 'modest', 'well-off'];
+// what a household needs each day, per person, at each standard of living. Everyone eats from the granary and wants a warm hearth;
+// a comfortable household also buys bread, goods, planks for repairs and tools; a well-off one adds two kinds of luxury
+const LEVELS = ['getting by', 'comfortable', 'well-off'];
+const NEEDS = [
+  {},
+  { bread: 0.4, goods: 0.06, planks: 0.02, tools: 0.01 },
+  { bread: 0.4, goods: 0.12, planks: 0.03, tools: 0.015, lux: 0.04 },
+];
+const CLIMB = [0, 4, 12];   // savings per head a household needs before it moves up to a level
 // what each finished building costs to keep up, each season
 const UPKEEP = { hut: { wood: 1 }, house: { wood: 1 }, manor: { wood: 1, stone: 1 }, store: { wood: 1 }, dock: { wood: 1 }, quarry: { wood: 1 }, workshop: { wood: 1 },
   mill: { wood: 1 }, bakery: { wood: 1 }, sawmill: { wood: 1 }, smithy: { stone: 1 },
@@ -1105,8 +1113,8 @@ class Steward {
     for (const type in CHAIN) want[CHAIN[type].job] = this.chainOk(type) ? placesAt(b => b.type === type) : 0;
     want.grower = placesAt(b => !!LUX_OF[b.type] && f.res[LUX_OF[b.type]] < f.want(LUX_OF[b.type]) * 3);
     let rest = pop; for (const k in JOBS) if (k !== 'woodcutter') rest -= want[k];
-    // short of hands: the luxuries and the chains wait first, then the artisans, the miners and the builders
-    for (const k of ['grower', 'smith', 'sawyer', 'baker', 'miller', 'artisan', 'miner', 'builder']) {
+    // short of hands: the luxuries, tools, planks and goods wait first, then the bread, the miners and the builders
+    for (const k of ['grower', 'smith', 'sawyer', 'artisan', 'miller', 'baker', 'miner', 'builder']) {
       if (rest >= 0) break;
       const cut = Math.min(Math.max(0, want[k] - (k === 'builder' && work ? 1 : 0)), -rest); want[k] -= cut; rest += cut;
     }
@@ -1360,15 +1368,19 @@ class Steward {
     if (f.age >= 1 && f.res.stone < c * 0.5 && f.anyCount('quarry') < 1 + Math.floor(pop / 45) && !sites.some(b => b.type === 'quarry')) {
       if (tryBuild('quarry', 'Opening a quarry so the stone never runs out.')) return;
     }
-    if (f.age >= 2 && f.anyCount('workshop') < 1 + Math.floor(pop / 35) && !sites.some(b => b.type === 'workshop') && (f.res.wood > f.want('wood') * 1.2 || f.res.goods < f.want('goods') * 0.5) && tryBuild('workshop', 'Opening a workshop so spare hands can make goods to sell.')) return;
+    if (f.age >= 2 && f.anyCount('workshop') < 1 + Math.floor(pop / (f.short && f.short.goods > 0.25 ? 20 : 35)) && !sites.some(b => b.type === 'workshop') && f.res.goods < f.want('goods') * (f.anyCount('workshop') ? 0.7 : 1.5) && tryBuild('workshop', 'Opening a workshop so spare hands can make goods to sell.')) return;
     if (f.age >= 1 && f.anyCount('forester') < 1 + Math.floor(pop / 40) && !sites.some(b => b.type === 'forester') && (f.res.wood < c * 0.6 || this.trees() < pop) && tryBuild('forester', "Building a forester's hut to replant the woods.")) return;
     // production chains from the Town age: mills where grain piles up, a bakery for each mill, sawmills for spare logs, smithies once the pits turn up ore
     if (f.age >= 2) {
       const none = t => !sites.some(b => b.type === t);
-      if (none('mill') && f.anyCount('mill') < 1 + Math.floor(pop / 70) && f.res.food > f.want('food') * 1.2 && tryBuild('mill', 'Building a mill to grind the surplus grain into flour.')) return;
-      if (none('bakery') && f.anyCount('bakery') < Math.min(f.builtCount('mill') * 2, 1 + Math.floor(pop / 50)) && f.res.flour >= 12 && tryBuild('bakery', 'Opening a bakery to turn the flour into bread.')) return;
-      if (none('sawmill') && f.anyCount('sawmill') < 1 + Math.floor(pop / 90) && f.res.wood > f.want('wood') && tryBuild('sawmill', 'Building a sawmill to saw logs into planks.')) return;
-      if (none('smithy') && f.builtCount('quarry') && f.anyCount('smithy') < 1 + Math.floor(pop / 100) && (f.res.ore >= 6 || f.res.tools < 2) && tryBuild('smithy', 'Opening a smithy to forge tools from the ore.')) return;
+      // households that go short of something the town could make are what opens another bakery, smithy, sawmill or workshop
+      const S = f.short || {}, busy = t => { const B2 = f.buildings.filter(b => b.built && b.type === t).length * BUILD[t].slots; return !B2 || f.people.filter(c => c.job === CHAIN[t].job).length >= B2 * 0.75; };
+      const more = (t, g, cap) => none(t) && f.anyCount(t) < cap && (S[g] || 0) > 0.25 && busy(t);
+      const mills = f.anyCount('mill'), bakeries = f.anyCount('bakery');
+      if (none('mill') && mills < 2 + Math.floor(pop / 50) && (mills === 0 ? f.res.food > f.want('food') * 1.2 : mills * 1.5 < bakeries && f.res.flour < 8) && tryBuild('mill', 'Building a mill: the bakeries need more flour.')) return;
+      if (mills && (bakeries === 0 || more('bakery', 'bread', 1 + Math.floor(pop / 25))) && f.res.flour >= 6 && tryBuild('bakery', bakeries ? 'Opening another bakery: households are going without bread.' : 'Opening a bakery to turn the flour into bread.')) return;
+      if ((f.anyCount('sawmill') === 0 ? f.res.wood > f.want('wood') : more('sawmill', 'planks', 1 + Math.floor(pop / 80))) && tryBuild('sawmill', 'Building a sawmill: households want planks for their repairs.')) return;
+      if (f.builtCount('quarry') && (f.anyCount('smithy') === 0 ? f.res.ore >= 6 || f.res.tools < 2 : more('smithy', 'tools', 1 + Math.floor(pop / 80))) && tryBuild('smithy', 'Opening a smithy: there are not enough tools to go round.')) return;
       // an estate on any luxury ground inside our borders; a realm without such ground looks for it once a year
       const no = this._noLux || (this._noLux = {});
       for (const k of LUX_KEYS) {
@@ -1579,16 +1591,17 @@ class Settlement {
   want(k) {
     const pop = this.pop, u = this.upkeep();
     if (k === 'food') return pop * 4 + 20;
-    if (k === 'goods') return Math.ceil(pop * 1.5) + 10;
-    // the finer goods are wanted from the Town age: bread for the table, planks and tools for the trades, and a little luxury
+    // the finer goods: about six days of what its households set out to buy, plus what the trades themselves use
+    const d = Math.ceil(((this.demand && this.demand[k]) || 0) * 6);
+    if (k === 'goods') return d + 10 + Math.ceil(pop * 0.2);
     if (k !== 'wood' && k !== 'stone') {
       if (this.age < 2) return 0;
-      if (k === 'flour') return Math.ceil(pop * 0.5) + 6;
-      if (k === 'bread') return Math.ceil(pop * 1.5) + 6;
-      if (k === 'planks') return 20 + this.age * 10;
-      if (k === 'ore') return 10 + Math.ceil(pop * 0.15);
-      if (k === 'tools') return 5 + Math.ceil(pop * 0.25);
-      return 4 + Math.ceil(pop * 0.3);   // each luxury
+      if (k === 'flour') return Math.ceil(this.want('bread') * 0.5);
+      if (k === 'bread') return d + 6;
+      if (k === 'planks') return d + 20 + this.age * 10;
+      if (k === 'ore') return 10 + Math.ceil(this.want('tools') * 0.6);
+      if (k === 'tools') return d + 5 + Math.ceil(pop * 0.1);
+      return d + 4;   // each luxury
     }
     if (k === 'wood') return Math.ceil(pop / 4) * SEASON_DAYS + 30 + this.age * 10 + u.wood * 2 + this.fuel() * SEASON_DAYS;
     return 30 + this.age * 30 + u.stone * 2;
@@ -1610,8 +1623,10 @@ class Settlement {
   fuel() { return this.era >= 5 ? Math.ceil(this.pop * (this.era >= 6 ? 0.06 : 0.04)) : 0; }
   get tax() { return this.hh ? this.hh.net : 0; }
   // --- households ---
-  // Each home is a household. The best-paid workers live nearest the centre, so rich and poor quarters form on their own.
-  // The treasury pays wages for the work it gets; households pay it back for bread and goods, and keep what's left.
+  // Each home is a household. The best-paid workers live nearest the centre. Each household lives at a level: getting by,
+  // comfortable or well-off, and buys what that level needs from the town's stores at the local price. A household that
+  // keeps its needs met and has savings put by moves up; one that goes short slides back down. What they want to buy,
+  // and fail to find, is the demand the town's trades and caravans answer.
   households() {
     const t = this.tc;
     if (!t) return;
@@ -1627,46 +1642,92 @@ class Settlement {
     homes.forEach((b, j) => { for (let n = b.houses; n > 0 && i < workers.length; n--) { bill[j] += workers[i++]; size[j]++; } });
     const owed = bill.reduce((a, b) => a + b, 0), pay = owed > 0 ? Math.min(1, this.gold / owed) : 1;
     this.wageCut = pay < 0.95;
-    let paid = 0, back = 0, goodsSold = 0, poor = 0, rich = 0, folk = 0, sum = 0;
-    const pf = this.price('food'), pg = this.price('goods'), luxSold = {};
-    const have = this.age >= 2 ? LUX_KEYS.filter(k => this.res[k] >= 1) : [], px = {}; for (const k of have) px[k] = this.price(k);
+    let paid = 0, back = 0, poor = 0, folk = 0, satSum = 0, loaves = 0;
+    const px = {}; for (const g of GOODS) px[g] = this.price(g);
+    // the granary and the hearth: what every household needs
+    const fed = this.res.food >= this.pop * 0.5 || this.res.bread >= this.pop * 0.3, warm = G.season !== 3 || this.res.wood >= Math.ceil(this.pop / 4);
+    const base = (fed ? 0.6 : 0.1) + (warm ? 0.4 : 0);
+    const lux = LUX_KEYS.filter(k => this.res[k] >= 1).sort((a, b) => this.res[b] - this.res[a]).slice(0, 2);
+    const dem = {}, got = {}, lv = [0, 0, 0], short = {};
     homes.forEach((b, j) => {
       const n = size[j];
       if (!n) { b.cash = 0; return; }
       const wage = bill[j] * pay * 0.9;   // a tenth stays with the treasury as tax
       paid += wage;
       let cash = (b.cash || 0) + wage;
-      // rent first, dearer near the centre; then bread, at the local price
+      const L = b.lvl || 0;
+      // rent first, dearer near the centre; then grain from the granary (less of it for a household that buys bread)
       const rent = Math.min(cash, n * 0.1 * (1 + 2 * (1 - j / homes.length))); cash -= rent; back += rent;
-      const food = Math.min(cash, n * pf * 0.4); cash -= food; back += food;
-      // a tenth of what's put by goes on goods and comforts each day, so savings settle at about ten days of spare pay:
-      // a well-paid household near the centre ends up far better off than a field hand's at the edge
-      const spend = cash * 0.1;
-      // the better-off spend more of it on luxuries: wine, salt, silk and spices, whatever the town has in
-      let lux = spend * (j < homes.length * 0.35 ? 0.4 : 0.15), luxSpent = 0;
-      if (have.length) for (const k of have) { const q2 = Math.min(this.res[k], lux / have.length / px[k]); if (q2 > 0) { this.res[k] -= q2; luxSold[k] = (luxSold[k] || 0) + q2; luxSpent += q2 * px[k]; } }
-      const q = Math.min(this.res.goods, (spend - luxSpent) / pg);
-      this.res.goods -= q; goodsSold += q; cash -= spend; back += spend;
+      const food = Math.min(cash, n * px.food * (L ? 0.24 : 0.4)); cash -= food; back += food;
+      // then each thing its level needs, as far as the stores and its purse allow
+      let met = 0, parts = 0, miss = null, worst = 1;
+      const need = NEEDS[L];
+      for (const g in need) {
+        const ks = g === 'lux' ? (lux.length ? lux : LUX_KEYS.slice(0, 2)) : [g], want = need[g] * n * (g === 'lux' ? 2 : 1);
+        let have = 0;
+        for (const kk of ks) {
+          const q = want / ks.length;
+          dem[kk] = (dem[kk] || 0) + q;
+          const take = Math.max(0, Math.min(q, this.res[kk], cash / px[kk]));
+          if (take > 0) { this.res[kk] -= take; cash -= take * px[kk]; back += take * px[kk]; got[kk] = (got[kk] || 0) + take; have += take; if (kk === 'bread') loaves += take; }
+        }
+        const r = want > 0 ? have / want : 1;
+        met += r; parts++;
+        if (r < worst) { worst = r; miss = g === 'lux' ? 'luxuries' : g; }
+      }
+      const s = parts ? base * 0.4 + 0.6 * met / parts : base;
+      b.sat = b.sat === undefined ? s : b.sat * 0.85 + s * 0.15;
+      b.miss = worst < 0.6 ? miss : base < 0.9 ? (fed ? 'firewood' : 'food') : null;
+      // a little of what's put by goes on fairs, fees and treats each day, so savings never pile up for ever
+      const extra = Math.max(0, cash - n * 20) * 0.05; cash -= extra; back += extra;
       b.cash = cash;
-      // hardship and comfort are absolute: a few days' spare pay put by, or nothing at all
-      const per = cash / n;
-      if (per < 1.5) poor += n; else if (per > 9) rich += n;
-      folk += n; sum += cash;
-    });
-    // how a home looks is relative to its town: the poorest fifth and the richest sixth of households stand out at any era
-    // (with a little slack so homes don't flicker between looks)
-    const lived = homes.filter((b, j) => size[j] && b.type !== 'tc'), per = new Map(homes.map((b, j) => [b, size[j] ? b.cash / size[j] : 0]));
-    lived.sort((a, b) => per.get(a) - per.get(b));
-    lived.forEach((b, i) => {
-      const r = lived.length > 1 ? i / (lived.length - 1) : 0.5, was = b.tier === undefined ? 1 : b.tier;
-      const tier = r < (was === 0 ? 0.27 : 0.2) ? 0 : r > (was === 2 ? 0.78 : 0.85) ? 2 : 1;
-      if (tier !== was) { b.tier = tier; G.world.touch(b.x, b.y); }
+      // up a level with needs met and savings put by; down a level after going short for a while (at most once a season either way)
+      const per = cash / n, may = G.day - (b.lvlDay || -1e9) >= SEASON_DAYS;
+      if (may && L < 2 && this.age >= 2 && b.sat > 0.8 && per >= CLIMB[L + 1]) { b.lvl = L + 1; b.lvlDay = G.day; b.sat = 0.7; }
+      else if (may && L > 0 && (b.sat < 0.45 || per < CLIMB[L] * 0.2)) { b.lvl = L - 1; b.lvlDay = G.day; b.sat = 0.7; }
+      if (per < 1.5) poor += n;
+      folk += n; satSum += b.sat * n; lv[b.lvl || 0] += n;
+      // how it looks: struggling, getting by, comfortable or well-off
+      const look = b.type === 'tc' ? 1 : (b.lvl || 0) === 2 ? 2 : b.lvl ? 3 : b.sat < 0.55 ? 0 : 1;
+      if (look !== (b.tier === undefined ? 1 : b.tier)) { b.tier = look; G.world.touch(b.x, b.y); }
     });
     this.gold += back - paid;
-    const tiers = [0, 0, 0]; for (const b of lived) tiers[b.tier === undefined ? 1 : b.tier]++;
-    this.hh = { tiers, net: back - paid, wages: paid, poor: folk ? poor / folk : 0, rich: folk ? rich / folk : 0, goods: folk ? goodsSold / folk : 0, folk,
-      lux: LUX_KEYS.filter(k => (luxSold[k] || 0) >= folk * 0.01 && folk) };
-    if (goodsSold || have.length) this._pxDay = -1;
+    this._loaves = loaves;
+    // demand remembered over about a week: it sets what the town wants on hand, and which trades it opens
+    const D = this.demand || (this.demand = {}), S = this.short || (this.short = {});
+    for (const g of GOODS) {
+      const d = dem[g] || 0, sh = d > 0 ? 1 - (got[g] || 0) / d : 0;
+      D[g] = (D[g] || 0) * 0.85 + d * 0.15; S[g] = (S[g] || 0) * 0.85 + sh * 0.15;
+      if (S[g] > 0.3 && D[g] > 0.5) short[g] = S[g];
+    }
+    const tiers = [0, 0, 0, 0]; for (const b of homes) if (b.type !== 'tc' && b.tier !== undefined) tiers[b.tier]++;
+    this.hh = { tiers, lv, net: back - paid, wages: paid, poor: folk ? poor / folk : 0, sat: folk ? satSum / folk : 1, folk,
+      short: Object.keys(short).sort((a, b) => short[b] - short[a]), lux: lv[2] ? lux : [] };
+    this._pxDay = -1;
+  }
+  // families who can't buy what they need move to a neighbour where they can, if it has homes to spare and isn't at war with us
+  migrate() {
+    const hh = this.hh;
+    if (!hh || hh.sat >= 0.55 || this.age < 2 || this.pop < 20 || this.plague) return;
+    let best = null, bs = hh.sat + 0.2;
+    for (const o of G.alive()) {
+      if (o === this || !o.tc || !o.hh || o.plague || G.dip.stanceOf(this, o) === 'war' || o.housing - o.pop < 4 || o.pop >= POPCAP[o.age]) continue;
+      if (!(G.dip.contact[key(this.id, o.id)] > 0) && !G.trade.between(this, o) && o.liege !== this.id && this.liege !== o.id) continue;
+      if (o.hh.sat > bs) { bs = o.hh.sat; best = o; }
+    }
+    if (!best) return;
+    const n = Math.min(ri(2, 4), best.housing - best.pop - 1), t = best.tc, W = G.world;
+    const go = this.people.filter(c => c.st !== 'exodus' && !c.carry && !c.load).slice(-n);
+    let moved = 0;
+    for (const c of go) {
+      const p = W.findPath(c.x, c.y, t.x, t.y, best);
+      if (!p) continue;
+      c.setJob(pick(['farmer', 'woodcutter', 'builder'])); c.f = best.id; c.st = 'exodus'; c.path = p; moved++;
+    }
+    if (!moved) return;
+    G.dirtyC();
+    const why = hh.short && hh.short.length ? `${hh.short.slice(0, 2).map(k => LUX[k] ? LUX[k].what : k).join(' and ')} they could not buy` : 'hard times';
+    G.chron.note(`${moved} people left ${this.name} for ${best.name}, tired of ${why}.`, 'pol');
   }
   // a luxury this realm has no ground for, grown by a neighbour it knows (the nearest such neighbour), or null
   covets() {
@@ -1870,11 +1931,13 @@ class Settlement {
     if (this.spent) { m += 2; why.push('fairs and feasts'); }
     const hh = this.hh;
     if (hh && hh.poor > 0.25) { m -= Math.round(hh.poor * 14); why.push('poverty'); }
-    if (hh && hh.rich > 0.15) { m += Math.round(Math.min(0.5, hh.rich) * 8); why.push('prosperous households'); }
-    if (hh && hh.goods > 0.08) { m += 3; why.push('goods in the shops'); }
     if (this.wageCut) { m -= 6; why.push('wages cut'); }
-    if (this.fed > 0.3) { m += 2; why.push('fresh bread'); }
-    if (hh && hh.lux && hh.lux.length) { m += Math.min(4, hh.lux.length); why.push(hh.lux.map(k => LUX[k].what).join(' and ') + ' on the tables'); }
+    // households going without what their way of life needs, or living comfortably
+    const nm = k => LUX[k] ? LUX[k].what : k;
+    if (hh && hh.sat < 0.7) { m -= Math.round((0.7 - hh.sat) * 30); why.push(hh.short && hh.short.length ? `no ${hh.short.slice(0, 2).map(nm).join(' or ')} to buy` : 'hard times at home'); }
+    const up = hh && hh.folk ? (hh.lv[1] + hh.lv[2] * 1.5) / hh.folk : 0;
+    if (up > 0.15 && hh.sat >= 0.7) { m += Math.round(Math.min(1, up) * 7); why.push('comfortable lives'); }
+    if (hh && hh.lux && hh.lux.length) why.push(hh.lux.map(nm).join(' and ') + ' on the tables');
     else if (this.age >= 3) { const near = this.covets(); if (near) { m -= 2; why.push(`envy of ${near.f.name}'s ${LUX[near.k].what}`); } }
     if (this.hasWonder('library')) { m += 6; why.push('the Great Library'); }
     if (this.hasWonder('arena')) { m += 5; why.push('games in the Arena'); }
@@ -1892,9 +1955,9 @@ class Settlement {
     if (rnd() < 0.3) this.steward.planRoads();
     if (G.day % SEASON_DAYS === 3) this.steward.redevelop();
     let hungry = 0, starved = 0;
-    // bread from the bakery goes on the table first; it goes further than plain grain (four grain make four and a half loaves)
-    let loaves = Math.floor(Math.min(this.res.bread, this.pop * 0.6));
-    this.res.bread -= loaves; this.fed = this.pop ? loaves / this.pop : 0;
+    // bread the households bought from the bakeries goes on the table first; it goes further than plain grain (four grain make four and a half loaves)
+    let loaves = Math.floor(this._loaves || 0);   // what the households bought yesterday
+    this._loaves = 0; this.fed = this.pop ? Math.min(1, loaves / this.pop) : 0;
     for (const c of shuffle(this.people.slice())) {
       if (loaves >= 1) { loaves--; c.hun = 0; }
       else if (this.res.food >= 1) { this.res.food--; c.hun = 0; } else { c.hun++; hungry++; if (c.hun >= 3) { G.kill(c); starved++; } }
@@ -1921,6 +1984,7 @@ class Settlement {
       this._pxDay = -1;
     }
     this.steward.trade();
+    if (G.dayOfSeason === 5) this.migrate();
     const r = this.moodTarget();
     this.moodWhy = r.why; this.mood += (r.m - this.mood) * 0.15; this.grief *= 0.9;
     const moodK = Math.max(0.3, this.mood / 60);
@@ -3587,9 +3651,14 @@ class Renderer {
       g.strokeStyle = '#e0b33a'; g.lineWidth = 0.05; g.beginPath(); g.moveTo(x + 0.5, y + 0.08); g.lineTo(x + 0.5, y - 0.2); g.stroke();
       g.fillStyle = '#e0b33a'; g.beginPath(); g.arc(x + 0.5, y - 0.22, 0.05, 0, 7); g.fill();
     }
-    // how well the household lives shows on the house: a garden and lamp for the well-off, patches and a woodpile for the poor
+    // how well the household lives shows on the house: a garden and lamp for the well-off, window boxes and a fence for the comfortable,
+    // patches and a woodpile for a household going without
     if (b.built && b.tier !== undefined && b.tier !== 1 && (type === 'hut' || type === 'house' || type === 'manor')) {
-      if (b.tier === 2) {   // a hedged garden with shrubs and flowers, and a gilded ridge
+      if (b.tier === 3) {   // a picket fence and flowers in the window boxes
+        g.fillStyle = w3 ? '#e8ecee' : '#efe6cf'; g.fillRect(x - 0.02, y + 0.86, 1.04, 0.04);
+        for (let k = 0; k < 6; k++) g.fillRect(x + k * 0.19, y + 0.8, 0.04, 0.12);
+        if (!w3) { g.fillStyle = '#e06a7a'; g.fillRect(x + 0.22, y + 0.56, 0.16, 0.04); g.fillRect(x + 0.62, y + 0.56, 0.16, 0.04); }
+      } else if (b.tier === 2) {   // a hedged garden with shrubs and flowers, and a gilded ridge
         g.fillStyle = w3 ? '#e3e9eb' : '#4f8f3e'; g.fillRect(x - 0.02, y + 0.82, 1.04, 0.16);
         g.fillStyle = w3 ? '#cfd8db' : '#3d7a31';
         for (const sx of [0.06, 0.94]) { g.beginPath(); g.arc(x + sx, y + 0.74, 0.1, 0, 7); g.fill(); }
@@ -3765,6 +3834,18 @@ class Renderer {
     }
     for (let i = 0; i < loads.length; i += 3) { ctx.fillStyle = loads[i + 2]; ctx.fillRect(loads[i] - rad * 0.5, loads[i + 1] - rad * 2.3, rad, rad * 0.85); }
     if (picked) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = rad * 0.4; ctx.beginPath(); ctx.arc(picked[0], picked[1], rad * 1.9, 0, 7); ctx.stroke(); }
+    // up close, a household going without something shows it in a little thought bubble over the house
+    if (k / dpr > 14) {
+      const MISS = { luxuries: RES_COLOR.wine, firewood: RES_COLOR.wood };
+      for (const b of G.buildings) {
+        if (!b.miss || !b.built || !inView(b)) continue;
+        const x = b.x + 0.62, y = b.y - 0.34;
+        ctx.fillStyle = 'rgba(255,255,255,.92)'; ctx.beginPath(); ctx.ellipse(x + 0.17, y + 0.13, 0.2, 0.15, 0, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.arc(x + 0.04, y + 0.32, 0.04, 0, 7); ctx.fill();
+        ctx.fillStyle = MISS[b.miss] || RES_COLOR[b.miss] || '#e05a4a'; ctx.beginPath(); ctx.arc(x + 0.17, y + 0.13, 0.08, 0, 7); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 0.025; ctx.stroke();
+      }
+    }
     if (UI.inspect && !UI.inspect.c) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.06; ctx.strokeRect(UI.inspect.x + 0.03, UI.inspect.y + 0.03, 0.94, 0.94); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const kc = k / dpr;
@@ -3872,8 +3953,8 @@ class Interface {
     const hh = f.hh;
     const chains = Object.keys(CHAIN).filter(t => f.builtCount(t)).map(t => `${f.builtCount(t)} ${f.builtCount(t) > 1 ? BUILD[t].name.toLowerCase().replace(/y$/, 'ie') + 's' : BUILD[t].name.toLowerCase()}`);
     const cv = f.covets();
-    const fine = `${chains.length ? `<b>Trades:</b> ${chains.join(', ')}. ${f.fed > 0 ? `${Math.round(f.fed * 100)}% eat bakery bread. ` : ''}${f.res.tools >= 1 ? 'Tools make every trade a fifth faster. ' : ''}` : ''}${hh && hh.lux && hh.lux.length ? `<b>On the tables:</b> ${hh.lux.map(k => LUX[k].what).join(', ')}. ` : ''}${cv ? `${f.name} has no ${LUX[cv.k].land} and envies ${cv.f.name}'s ${LUX[cv.k].what}. ` : ''}`;
-    this.setHtml('econnote', fine + `${hh && hh.folk ? `<b>Households:</b> by local standards ${hh.tiers ? `${hh.tiers[2]} homes are well-off, ${hh.tiers[1]} modest and ${hh.tiers[0]} poor` : ''}; ${Math.round(hh.poor * 100)}% of people live hand to mouth. They earned ${Math.round(hh.wages)} gold in wages today${f.wageCut ? ' (cut: the treasury ran short)' : ''} and spent it on bread, ${(hh.goods * hh.folk).toFixed(0)} goods and luxuries. ` : ''}Prices are in gold: ▲ dearer than the world price, ▼ cheaper. Treasury ${Math.floor(f.gold)} gold. Homes for ${f.housing}. Each season: ${u.wood} wood and ${u.stone} stone of upkeep, ${f.soldiersPay} gold for soldiers${f.fuel() ? `, ${f.fuel()} wood a day for fuel` : ''}. ${f.spent ? `Spent ${f.spent} gold on fairs and feasts last season. ` : ''}Storage ${f.cap}.${f.decay ? ' Buildings are crumbling for want of upkeep.' : ''}${f.unpaid ? ' The soldiers went unpaid.' : ''}`);
+    const fine = `${chains.length ? `<b>Trades:</b> ${chains.join(', ')}. ${f.fed > 0 ? `${Math.round(f.fed * 100)}% eat bakery bread. ` : ''}${f.res.tools >= 1 ? 'Tools make every trade a fifth faster. ' : ''}` : ''}${cv ? `${f.name} has no ${LUX[cv.k].land} and envies ${cv.f.name}'s ${LUX[cv.k].what}. ` : ''}`;
+    this.setHtml('econnote', fine + `${hh && hh.folk ? `<b>Households:</b> ${hh.lv ? `${hh.lv[2]} people live well-off, ${hh.lv[1]} comfortably and ${hh.lv[0]} just get by` : ''}; their needs are ${Math.round(hh.sat * 100)}% met${hh.short && hh.short.length ? `, and they go short of ${hh.short.map(k => LUX[k] ? LUX[k].what : k).join(', ')}` : ''}. ${hh.lux && hh.lux.length ? `The well-off buy ${hh.lux.map(k => LUX[k].what).join(' and ')}. ` : ''}${Math.round(hh.poor * 100)}% live hand to mouth. Wages today: ${Math.round(hh.wages)} gold${f.wageCut ? ' (cut: the treasury ran short)' : ''}. ` : ''}Prices are in gold: ▲ dearer than the world price, ▼ cheaper. Treasury ${Math.floor(f.gold)} gold. Homes for ${f.housing}. Each season: ${u.wood} wood and ${u.stone} stone of upkeep, ${f.soldiersPay} gold for soldiers${f.fuel() ? `, ${f.fuel()} wood a day for fuel` : ''}. ${f.spent ? `Spent ${f.spent} gold on fairs and feasts last season. ` : ''}Storage ${f.cap}.${f.decay ? ' Buildings are crumbling for want of upkeep.' : ''}${f.unpaid ? ' The soldiers went unpaid.' : ''}`);
   }
   // world prices exist only where goods change hands: a line of the last six years for each good, and who sells cheapest and buys dearest
   market() {
@@ -3915,7 +3996,11 @@ class Interface {
       if (LUX_OF[b.type]) return `<b>${B.name}</b> of ${f.name} · ${LUX[LUX_OF[b.type]].what} from its ${LUX[LUX_OF[b.type]].land}, sold dear where none grows`;
       if (B.slots) return `<b>${B.name}</b> of ${f.name} · yields ${f.farmYield(b)} a trip`;
       if (b.type === 'workshop') return `<b>${B.name}</b> of ${f.name} · artisans turn spare wood${f.era >= 3 ? ' and stone' : ''} into goods`;
-      if (B.house) return `<b>${B.name}</b> of ${f.name} · home for ${B.house}${b.tier !== undefined ? ` · a ${CLASS[b.tier]} household, ${Math.floor(b.cash || 0)} gold saved` : ''}`;
+      if (B.house) {
+        if (b.sat === undefined || b.type === 'tc') return `<b>${B.name}</b> of ${f.name} · home for ${B.house}`;
+        const nd = Object.keys(NEEDS[b.lvl || 0]).map(k => k === 'lux' ? 'luxuries' : k);
+        return `<b>${B.name}</b> of ${f.name} · a household that ${['gets by', 'lives comfortably', 'lives well'][b.lvl || 0]}${nd.length ? ` (buys ${nd.join(', ')})` : ''} · needs ${Math.round(b.sat * 100)}% met${b.miss ? `, short of ${b.miss}` : ''} · ${Math.floor(b.cash || 0)} gold saved`;
+      }
       if (B.def) return `<b>${B.name}</b> of ${f.name} · adds ${B.def} defense`;
       return `<b>${B.name}</b> of ${f.name}`;
     }
