@@ -359,6 +359,7 @@ const JOBS = {
   woodcutter: { label: 'Woodcutters', color: '#8b5a2b' },
   miner:      { label: 'Miners',      color: '#aab3bb' },
   forester:   { label: 'Foresters',   color: '#4f8f3a' },
+  artisan:    { label: 'Artisans',    color: '#b86fc9' },
   builder:    { label: 'Builders',    color: '#e07b39' },
 };
 const AGES = [
@@ -381,6 +382,7 @@ const BUILD = {
   dock:      { name: 'Fishing dock', cost: { wood: 14, stone: 2 },   time: 8,  slots: 1 },
   quarry:    { name: 'Quarry',     cost: { wood: 20 },               time: 10, slots: 3 },
   forester:  { name: "Forester's hut", cost: { wood: 14 },           time: 8,  slots: 2 },
+  workshop:  { name: 'Workshop',   cost: { wood: 30, stone: 20 },    time: 12, slots: 3 },
   store:     { name: 'Storehouse', cost: { wood: 15, stone: 6 },     time: 10 },
   tower:     { name: 'Watchtower', cost: { wood: 10, stone: 16 },    time: 12, def: 4 },
   barracks:  { name: 'Barracks',   cost: { wood: 30, stone: 40 },    time: 18, def: 12 },
@@ -472,12 +474,15 @@ const CAMP_NAMES = ['Red Hand', 'Wolf Clan', 'Ash Riders', 'Black Fang', 'Bone H
 const STANCE = { ally: 'Allied', neutral: 'At peace', war: 'At war' };
 const NAMES = ['Ada','Bram','Cora','Dain','Edda','Finn','Greta','Hale','Ines','Jory','Kit','Lena','Milo','Nell','Orrin','Pia','Quill','Rhea','Sten','Tova','Ulric','Vera','Wren','Yara','Zane','Ash','Bo','Cass','Dov','Elin','Fern','Gil','Hedy','Ivo','Juno','Lark','Moss','Nico','Oona','Pell','Rook','Sage','Tam','Ula','Wynn','Brin','Corra','Ebb','Hollis','Mara','Alder','Bryn','Calla','Dara','Esme','Fen','Garr','Holt','Isla','Jem','Kael','Liesl','Mira','Noor','Odo','Petra','Rowan','Sol','Thea','Ulla','Vik','Willa','Yves','Zora'];
 const DIRS = { n: 'north', s: 'south', e: 'east', w: 'west' };
-const RES_COLOR = { food: '#f2d25c', wood: '#c98a4b', stone: '#d6dde2' };
+const RES_COLOR = { food: '#f2d25c', wood: '#c98a4b', stone: '#d6dde2', goods: '#d29be0' };
 // the economy: each city prices goods by its own supply and demand; caravans carry goods from where they're cheap to where they're dear
-const GOODS = ['food', 'wood', 'stone'];
-const BASE_PRICE = { food: 1, wood: 1.3, stone: 2 };
+const GOODS = ['food', 'wood', 'stone', 'goods'];
+const BASE_PRICE = { food: 1, wood: 1.3, stone: 2, goods: 4 };
+// a day's pay for each trade; households live on their members' wages
+const WAGE = { farmer: 0.7, woodcutter: 0.8, forester: 0.9, miner: 1.1, builder: 1.4, artisan: 2.4 };
+const CLASS = ['poor', 'modest', 'well-off'];
 // what each finished building costs to keep up, each season
-const UPKEEP = { hut: { wood: 1 }, house: { wood: 1 }, manor: { wood: 1, stone: 1 }, store: { wood: 1 }, dock: { wood: 1 }, quarry: { wood: 1 },
+const UPKEEP = { hut: { wood: 1 }, house: { wood: 1 }, manor: { wood: 1, stone: 1 }, store: { wood: 1 }, dock: { wood: 1 }, quarry: { wood: 1 }, workshop: { wood: 1 },
   tower: { stone: 1 }, barracks: { stone: 2 }, chapel: { stone: 1 }, market: { stone: 2 }, cathedral: { stone: 3 }, castle: { stone: 4 }, palace: { stone: 6 }, wonder: { stone: 8 } };
 
 // ========== small helpers ==========
@@ -784,6 +789,10 @@ class Colonist {
       return sites[0];
     }
     if (this.job === 'forester') return this.forestTask(f, cl);
+    if (this.job === 'artisan') {
+      const w = f.buildings.filter(b => b.built && b.type === 'workshop' && b.onHome && (b.id === this.tid || cl.tid(b.id) < BUILD.workshop.slots) && this.reach(b.x, b.y));
+      return w.find(b => b.id === this.tid) || w.sort((a, b) => dist(this, a.x, a.y) - dist(this, b.x, b.y))[0] || null;
+    }
     if (this.job === 'miner') {
       // a quarry never runs dry, so miners fill its pits before they go looking for loose rock
       const q = f.buildings.filter(b => b.built && b.type === 'quarry' && b.onHome && (b.id === this.tid || cl.tid(b.id) < BUILD.quarry.slots) && this.reach(b.x, b.y));
@@ -863,7 +872,7 @@ class Colonist {
       const f = this.home, k = this.carry.r, before = f.res[k];
       f.res[k] = Math.min(f.cap, f.res[k] + this.carry.n);
       const got = f.res[k] - before;
-      if (got > 0) View.float(this.x, this.y, `+${got}`, RES_COLOR[k]);
+      if (got > 0) { View.float(this.x, this.y, `+${got}`, RES_COLOR[k]); f.gold += got * f.price(k) * 0.25; }   // the town's work is worth money: it pays the wages
       this.carry = null; this.st = 'idle'; this.wait = 0.2;
     } else { this.st = 'idle'; this.wait = 1 + rnd() * 2; }
   }
@@ -880,6 +889,16 @@ class Colonist {
       if (!b || !b.built || b.type !== 'quarry' || b.f !== f.id || !b.onHome) return quit();
       this.wt += dt * (1 + f.fx('work'));
       if (this.wt >= 7) { this.carry = { r: 'stone', n: 2 + (f.age >= 3 ? 1 : 0) + (f.era >= 5 ? 1 : 0) }; this.goStore(); }
+    } else if (this.job === 'artisan') {
+      // furniture, cloth and tools out of the town's spare wood (and stone, for masons, from the Medieval Era)
+      const b = G.byId(this.tid);
+      if (!b || !b.built || b.type !== 'workshop' || b.f !== f.id || !b.onHome) return quit();
+      this.wt += dt * (1 + f.fx('work'));
+      if (this.wt < 6) return;
+      const need = f.era >= 3 ? { wood: 2, stone: 1 } : { wood: 2 };
+      if (!f.afford(need)) return quit();
+      f.pay(need);
+      this.carry = { r: 'goods', n: 2 + (f.era >= 4 ? 1 : 0) + (f.era >= 6 ? 1 : 0) }; this.goStore();
     } else if (this.job === 'forester') {
       const W = G.world, T = W.tile(this.tx, this.ty), h = G.byId(this.tid);
       if (!T || !h || !h.built || h.f !== f.id || (T.own && T.own !== f.id)) return quit();
@@ -995,12 +1014,15 @@ class Steward {
     want.miner = stoneHungry ? Math.max(1, Math.ceil(pop * (f.age >= 2 ? 0.22 : 0.15))) : 0;
     const groves = f.buildings.filter(b => b.built && b.onHome && b.type === 'forester').length * BUILD.forester.slots;
     want.forester = Math.min(groves, Math.max(0, pop - want.farmer - want.builder - want.miner - 2));
-    let rest = pop - want.farmer - want.builder - want.miner - want.forester;
-    if (rest < 0) { want.miner = Math.max(0, want.miner + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester; }
-    if (rest < 0) { want.builder = Math.max(work ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester; }
+    const benches = f.buildings.filter(b => b.built && b.onHome && b.type === 'workshop').length * BUILD.workshop.slots;
+    want.artisan = f.res.wood > f.want('wood') * 0.7 && f.res.goods < f.want('goods') * 2.5 ? Math.min(benches, Math.max(0, pop - want.farmer - want.builder - want.miner - want.forester - 3)) : 0;
+    let rest = pop - want.farmer - want.builder - want.miner - want.forester - want.artisan;
+    if (rest < 0) { want.artisan = Math.max(0, want.artisan + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester - want.artisan; }
+    if (rest < 0) { want.miner = Math.max(0, want.miner + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester - want.artisan; }
+    if (rest < 0) { want.builder = Math.max(work ? 1 : 0, want.builder + rest); rest = pop - want.farmer - want.builder - want.miner - want.forester - want.artisan; }
     want.woodcutter = Math.max(0, rest);
     // more of a good than the town wants is only worth what a caravan pays: spare hands help the builders instead
-    if (f.res.wood >= Math.min(c * 0.95, f.want('wood') * 2) && want.woodcutter > 1) { const m = Math.floor(want.woodcutter * 0.7); want.woodcutter -= m; if (stoneHungry) want.miner += m; else if (f.res.food < f.want('food') * 2) want.farmer += m; else want.builder += m; }
+    if (f.res.wood >= Math.min(c * 0.95, f.want('wood') * 2) && want.woodcutter > 1) { const m = Math.floor(want.woodcutter * 0.7); want.woodcutter -= m; if (stoneHungry) want.miner += m; else if (f.res.food < f.want('food') * 2) want.farmer += m; else { const a = Math.min(m, Math.max(0, benches - want.artisan)); want.artisan += a; want.builder += m - a; } }
     const have = {}; for (const k in JOBS) have[k] = 0;
     for (const o of crew) have[o.job] = (have[o.job] || 0) + 1;
     for (const k in JOBS) {
@@ -1070,6 +1092,8 @@ class Steward {
         sc += d * 0.6 + j;
       } else if (type === 'quarry') {
         sc += -this.near(x, y, 2, T2 => T2.t === 2) * 0.8 + d * 0.25 + j;
+      } else if (type === 'workshop') {   // a crafts quarter between the centre and the edge of town
+        sc += Math.abs(d - Math.max(2.5, this.townR() * 0.6)) * 0.9 - this.near(x, y, 2, isType(['workshop', 'market'])) * 0.6 + j;
       } else if (type === 'forester') {
         sc += Math.abs(d - (R + 1.5)) * 0.8 - this.near(x, y, 2, T2 => T2.t === 1 || T2.sap > 0) * 0.4 + this.near(x, y, 1, isType(HOUSING)) * 1.5 + j;
       } else {
@@ -1167,8 +1191,10 @@ class Steward {
     const f = this.f, from = BUILD[to].from, t = f.tc;
     const cand = f.buildings.filter(b => b.type === from && b.built);
     if (!cand.length || !t) return false;
-    cand.sort((a, b) => Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y));
+    // the household with the most saved rebuilds first, and pays part of the cost
+    cand.sort((a, b) => (b.cash || 0) - (a.cash || 0) || Math.hypot(a.x - t.x, a.y - t.y) - Math.hypot(b.x - t.x, b.y - t.y));
     const b = cand[0];
+    if (b.cash > 10) { const share = Math.floor(b.cash * 0.5); b.cash -= share; f.gold += share; }
     f.pay(BUILD[to].cost);
     b.type = to; b.built = false; b.prog = 0; b.from = from;
     return true;
@@ -1226,6 +1252,7 @@ class Steward {
     if (f.age >= 1 && f.res.stone < c * 0.5 && f.anyCount('quarry') < 1 + Math.floor(pop / 45) && !sites.some(b => b.type === 'quarry')) {
       if (tryBuild('quarry', 'Opening a quarry so the stone never runs out.')) return;
     }
+    if (f.age >= 2 && f.anyCount('workshop') < 1 + Math.floor(pop / 35) && !sites.some(b => b.type === 'workshop') && (f.res.wood > f.want('wood') * 1.2 || f.res.goods < f.want('goods') * 0.5) && tryBuild('workshop', 'Opening a workshop so spare hands can make goods to sell.')) return;
     if (f.age >= 1 && f.anyCount('forester') < 1 + Math.floor(pop / 40) && !sites.some(b => b.type === 'forester') && (f.res.wood < c * 0.6 || this.trees() < pop) && tryBuild('forester', "Building a forester's hut to replant the woods.")) return;
     // wonders stay rare: one under way in the world at a time, three years apart, at most two per realm
     const wonderBusy = G.buildings.some(b => b.type === 'wonder' && !b.built) || G.day - (G.lastWonder || -1e9) < YEAR * 3;
@@ -1386,6 +1413,7 @@ class Settlement {
     if (this.culture === undefined) { this.culture = Faiths.cultureOf(this.name); this.faith = 0; this.zeal = 40; }   // saves from before faiths
     if (!this.roadPlan) this.roadPlan = [];
     if (this.gold === undefined) { this.gold = 20; this.ledger = { imp: {}, exp: {} }; }   // saves from before the economy
+    if (this.res && this.res.goods === undefined) this.res.goods = 0;
     if (!this.techs) {   // saves from before the tech tree: credit older realms with the early eras
       const n = Math.floor((this.age + 1) / 2);
       this.techs = Object.keys(TECHS).filter(t => TECHS[t].era < n); this.study = null; this.sci = 0;
@@ -1401,7 +1429,7 @@ class Settlement {
     }
     const usedC = new Set(G.alive().map(f => f.color));
     const color = COLORS.find(c => !usedC.has(c)) || pick(COLORS);
-    const f = new Settlement({ id: G.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10 }, mood: 62, grief: 0, moodWhy: [],
+    const f = new Settlement({ id: G.nid++, name: nm, color, cx: x, cy: y, age: 0, res: { food: 40, wood: 30, stone: 10, goods: 0 }, mood: 62, grief: 0, moodWhy: [],
       note: 'Getting the first fields planted.', aiT: rnd() * 1.5, gone: false, founded: G.day, parent: parent ? parent.id : 0,
       stats: { born: 0, died: 0, peak: 0 }, lowDays: 0, highSince: 0, plague: 0, names: {},
       culture: parent ? parent.culture : Faiths.cultureOf(nm), faith: parent ? parent.faith || 0 : 0, zeal: 40,
@@ -1424,6 +1452,7 @@ class Settlement {
   want(k) {
     const pop = this.pop, u = this.upkeep();
     if (k === 'food') return pop * 4 + 20;
+    if (k === 'goods') return Math.ceil(pop * 1.5) + 10;
     if (k === 'wood') return Math.ceil(pop / 4) * SEASON_DAYS + 30 + this.age * 10 + u.wood * 2 + this.fuel() * SEASON_DAYS;
     return 30 + this.age * 30 + u.stone * 2;
   }
@@ -1442,7 +1471,60 @@ class Settlement {
   }
   // factories and cities burn fuel every day from the Industrial Era
   fuel() { return this.era >= 5 ? Math.ceil(this.pop * (this.era >= 6 ? 0.06 : 0.04)) : 0; }
-  get tax() { return this.pop * 0.02 * clamp(this.mood / 60, 0.3, 1.5); }
+  get tax() { return this.hh ? this.hh.net : 0; }
+  // --- households ---
+  // Each home is a household. The best-paid workers live nearest the centre, so rich and poor quarters form on their own.
+  // The treasury pays wages for the work it gets; households pay it back for bread and goods, and keep what's left.
+  households() {
+    const t = this.tc;
+    if (!t) return;
+    const homes = this.buildings.filter(b => b.built && b.onHome && HOUSING.includes(b.type));
+    const civic = this.buildings.filter(b => b.built && (b.type === 'market' || LANDMARKS.includes(b.type)));
+    // land is worth most at the centre, next to the market and landmarks
+    const val = b => -Math.hypot(b.x - t.x, b.y - t.y) + civic.reduce((n, c) => n + (Math.abs(c.x - b.x) + Math.abs(c.y - b.y) <= 3 ? 1.5 : 0), 0);
+    homes.sort((a, b) => val(b) - val(a));
+    // pay rises with the era, and with a full treasury
+    const k = (0.8 + 0.12 * this.era) * clamp(0.8 + this.gold / (Math.max(1, this.pop) * 20), 0.8, 1.4), workers = this.people.map(c => (WAGE[c.job] || 1) * k).sort((a, b) => b - a);
+    const bill = homes.map(() => 0), size = homes.map(() => 0);
+    let i = 0;
+    homes.forEach((b, j) => { for (let n = b.houses; n > 0 && i < workers.length; n--) { bill[j] += workers[i++]; size[j]++; } });
+    const owed = bill.reduce((a, b) => a + b, 0), pay = owed > 0 ? Math.min(1, this.gold / owed) : 1;
+    this.wageCut = pay < 0.95;
+    let paid = 0, back = 0, goodsSold = 0, poor = 0, rich = 0, folk = 0, sum = 0;
+    const pf = this.price('food'), pg = this.price('goods');
+    homes.forEach((b, j) => {
+      const n = size[j];
+      if (!n) { b.cash = 0; return; }
+      const wage = bill[j] * pay * 0.9;   // a tenth stays with the treasury as tax
+      paid += wage;
+      let cash = (b.cash || 0) + wage;
+      // rent first, dearer near the centre; then bread, at the local price
+      const rent = Math.min(cash, n * 0.1 * (1 + 2 * (1 - j / homes.length))); cash -= rent; back += rent;
+      const food = Math.min(cash, n * pf * 0.4); cash -= food; back += food;
+      // a tenth of what's put by goes on goods and comforts each day, so savings settle at about ten days of spare pay:
+      // a well-paid household near the centre ends up far better off than a field hand's at the edge
+      const spend = cash * 0.1, q = Math.min(this.res.goods, spend / pg);
+      this.res.goods -= q; goodsSold += q; cash -= spend; back += spend;
+      b.cash = cash;
+      // hardship and comfort are absolute: a few days' spare pay put by, or nothing at all
+      const per = cash / n;
+      if (per < 1.5) poor += n; else if (per > 9) rich += n;
+      folk += n; sum += cash;
+    });
+    // how a home looks is relative to its town: the poorest fifth and the richest sixth of households stand out at any era
+    // (with a little slack so homes don't flicker between looks)
+    const lived = homes.filter((b, j) => size[j] && b.type !== 'tc'), per = new Map(homes.map((b, j) => [b, size[j] ? b.cash / size[j] : 0]));
+    lived.sort((a, b) => per.get(a) - per.get(b));
+    lived.forEach((b, i) => {
+      const r = lived.length > 1 ? i / (lived.length - 1) : 0.5, was = b.tier === undefined ? 1 : b.tier;
+      const tier = r < (was === 0 ? 0.27 : 0.2) ? 0 : r > (was === 2 ? 0.78 : 0.85) ? 2 : 1;
+      if (tier !== was) { b.tier = tier; G.world.touch(b.x, b.y); }
+    });
+    this.gold += back - paid;
+    const tiers = [0, 0, 0]; for (const b of lived) tiers[b.tier === undefined ? 1 : b.tier]++;
+    this.hh = { tiers, net: back - paid, wages: paid, poor: folk ? poor / folk : 0, rich: folk ? rich / folk : 0, goods: folk ? goodsSold / folk : 0, folk };
+    if (goodsSold) this._pxDay = -1;
+  }
   get soldiersPay() { return Math.floor(this.military * 0.1); }
   get drops() {
     if (this._dropsTick !== G.tick) { this._dropsTick = G.tick; this._drops = this.buildings.filter(b => b.built && (b.type === 'tc' || b.type === 'store') && b.onHome); }
@@ -1614,7 +1696,12 @@ class Settlement {
     if (this.plague) { m -= 12; why.push('plague'); }
     if (this.decay) { m -= 6; why.push('crumbling buildings'); }
     if (this.unpaid) { m -= 5; why.push('unpaid soldiers'); }
-    if (this.spent) { m += Math.min(6, 2 + Math.floor(this.spent / Math.max(20, pop))); why.push('a prosperous market'); }
+    if (this.spent) { m += 2; why.push('fairs and feasts'); }
+    const hh = this.hh;
+    if (hh && hh.poor > 0.25) { m -= Math.round(hh.poor * 14); why.push('poverty'); }
+    if (hh && hh.rich > 0.15) { m += Math.round(Math.min(0.5, hh.rich) * 8); why.push('prosperous households'); }
+    if (hh && hh.goods > 0.08) { m += 3; why.push('goods in the shops'); }
+    if (this.wageCut) { m -= 6; why.push('wages cut'); }
     if (this.hasWonder('library')) { m += 6; why.push('the Great Library'); }
     if (this.hasWonder('arena')) { m += 5; why.push('games in the Arena'); }
     if (this.hasGreat('scholar')) { m += 5; why.push(`the scholar ${this.great.name}`); }
@@ -1643,7 +1730,7 @@ class Settlement {
     }
     const fuel = this.fuel();
     if (fuel) this.res.wood = Math.max(0, this.res.wood - fuel);
-    this.gold += this.tax;
+    this.households();
     if (G.dayOfSeason === 1) {   // upkeep and the army's pay, each season
       const u = this.upkeep(); this.decay = false;
       for (const k in u) { if (this.res[k] >= u[k]) this.res[k] -= u[k]; else { this.res[k] = 0; this.decay = true; } }
@@ -3000,7 +3087,7 @@ class Renderer {
     const out = new Map(), wint = G.season === 3 ? 1 : 0;
     const bs = G.buildings.filter(b => b.built).sort((p, q) => p.y - q.y);
     for (const b of bs) {
-      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (b.wk ? b.wk.length * 977 : 0) + (f && f.age >= 3 ? 1 : 0) + (f ? f.era * 7919 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint;
+      const f = G.F(b.f), look = b.id * 7 + b.f * 131 + (b.wk ? b.wk.length * 977 : 0) + (f && f.age >= 3 ? 1 : 0) + (f ? f.era * 7919 : 0) + b.type.length * 17 + b.type.charCodeAt(0) + wint + (b.tier === undefined ? 1 : b.tier) * 104729;
       for (let cy = Math.floor((b.y - 0.6) / CS); cy <= Math.floor((b.y + 1.4) / CS); cy++) for (let cx = Math.floor((b.x - 0.2) / CS); cx <= Math.floor((b.x + 1.2) / CS); cx++) {
         const id = cx + ',' + cy;
         let e = out.get(id);
@@ -3158,6 +3245,15 @@ class Renderer {
       g.strokeStyle = '#6e5234'; g.lineWidth = 0.04;
       for (let k = 1; k < 5; k++) { g.beginPath(); g.moveTo(x + 0.12 + k * 0.15, y + 0.3); g.lineTo(x + 0.12 + k * 0.15, y + 0.7); g.stroke(); }
       g.fillStyle = '#4a3420'; g.fillRect(x + 0.14, y + 0.66, 0.08, 0.14); g.fillRect(x + 0.78, y + 0.66, 0.08, 0.14);
+    } else if (type === 'workshop') {   // a long low workshop with a sign and a forge chimney
+      if (era >= 5) smoke(x + 0.72, y + 0.02);
+      g.fillStyle = era >= 4 ? L.wall : '#8a6a4a'; g.fillRect(x + 0.08, y + 0.42, 0.84, 0.44);
+      g.fillStyle = era >= 4 ? L.roof : '#5f4a3a'; g.fillRect(x + 0.04, y + 0.32, 0.92, 0.12);
+      if (w3) { g.fillStyle = SNOW; g.fillRect(x + 0.04, y + 0.3, 0.92, 0.05); }
+      g.fillStyle = '#4b3a2e'; g.fillRect(x + 0.7, y + 0.1, 0.1, 0.24);
+      g.fillStyle = '#d29be0'; g.fillRect(x + 0.16, y + 0.5, 0.22, 0.12);
+      g.fillStyle = '#2f2219'; g.fillRect(x + 0.46, y + 0.58, 0.2, 0.28);
+      g.fillStyle = '#c8b28a'; g.fillRect(x + 0.74, y + 0.64, 0.12, 0.08); g.fillRect(x + 0.76, y + 0.56, 0.08, 0.08);
     } else if (type === 'quarry') {   // a stepped pit with a hoist
       g.fillStyle = '#8d8a84'; g.fillRect(x + 0.04, y + 0.2, 0.92, 0.74);
       g.fillStyle = '#a9a69e'; g.fillRect(x + 0.12, y + 0.28, 0.76, 0.58);
@@ -3245,6 +3341,20 @@ class Renderer {
       g.fillStyle = '#efe3c4'; g.fillRect(x + 0.18, y + 0.36, 0.64, 0.06);
       g.strokeStyle = '#e0b33a'; g.lineWidth = 0.05; g.beginPath(); g.moveTo(x + 0.5, y + 0.08); g.lineTo(x + 0.5, y - 0.2); g.stroke();
       g.fillStyle = '#e0b33a'; g.beginPath(); g.arc(x + 0.5, y - 0.22, 0.05, 0, 7); g.fill();
+    }
+    // how well the household lives shows on the house: a garden and lamp for the well-off, patches and a woodpile for the poor
+    if (b.built && b.tier !== undefined && b.tier !== 1 && (type === 'hut' || type === 'house' || type === 'manor')) {
+      if (b.tier === 2) {   // a hedged garden with shrubs and flowers, and a gilded ridge
+        g.fillStyle = w3 ? '#e3e9eb' : '#4f8f3e'; g.fillRect(x - 0.02, y + 0.82, 1.04, 0.16);
+        g.fillStyle = w3 ? '#cfd8db' : '#3d7a31';
+        for (const sx of [0.06, 0.94]) { g.beginPath(); g.arc(x + sx, y + 0.74, 0.1, 0, 7); g.fill(); }
+        if (!w3) { g.fillStyle = '#f08aa0'; for (let k = 0; k < 5; k++) g.fillRect(x + 0.14 + k * 0.17, y + 0.86, 0.06, 0.06); }
+        g.fillStyle = '#e8c04a'; g.fillRect(x + 0.3, y + 0.1, 0.4, 0.05);
+      } else {   // a sagging, patched house with a lean-to woodpile
+        g.fillStyle = 'rgba(55,40,28,.32)'; g.fillRect(x + 0.12, y + 0.2, 0.76, 0.68);
+        g.fillStyle = '#8a7560'; g.fillRect(x + 0.26, y + 0.36, 0.16, 0.1); g.fillRect(x + 0.58, y + 0.3, 0.12, 0.1);
+        g.fillStyle = '#7a5634'; g.fillRect(x - 0.02, y + 0.74, 0.2, 0.08); g.fillRect(x, y + 0.66, 0.16, 0.08);
+      }
     }
     g.restore();
   }
@@ -3437,7 +3547,7 @@ class Renderer {
 }
 
 // ========== the page around the map ==========
-const STATUS = { farmer: 'tending fields', woodcutter: 'felling trees', miner: 'quarrying stone', forester: 'tending the woods', builder: 'building' };
+const STATUS = { farmer: 'tending fields', woodcutter: 'felling trees', miner: 'quarrying stone', forester: 'tending the woods', artisan: 'making goods', builder: 'building' };
 const moodLabel = m => m >= 75 ? 'joyful' : m >= 60 ? 'content' : m >= 45 ? 'uneasy' : m >= 30 ? 'restless' : 'mutinous';
 
 class Interface {
@@ -3504,7 +3614,8 @@ class Interface {
     };
     this.setHtml('econ', `<span class="h">Good</span><span class="h">Price</span><span class="h">Stock / wants</span><span class="h">Last year</span>` + GOODS.map(cell).join(''));
     const u = f.upkeep();
-    this.setHtml('econnote', `Prices are in gold: ▲ dearer than the world price, ▼ cheaper. Treasury ${Math.floor(f.gold)} gold. Homes for ${f.housing}. Each season: ${u.wood} wood and ${u.stone} stone of upkeep, ${f.soldiersPay} gold for soldiers${f.fuel() ? `, ${f.fuel()} wood a day for fuel` : ''}. ${f.spent ? `Spent ${f.spent} gold on fairs and feasts last season. ` : ''}Storage ${f.cap}.${f.decay ? ' Buildings are crumbling for want of upkeep.' : ''}${f.unpaid ? ' The soldiers went unpaid.' : ''}`);
+    const hh = f.hh;
+    this.setHtml('econnote', `${hh && hh.folk ? `<b>Households:</b> by local standards ${hh.tiers ? `${hh.tiers[2]} homes are well-off, ${hh.tiers[1]} modest and ${hh.tiers[0]} poor` : ''}; ${Math.round(hh.poor * 100)}% of people live hand to mouth. They earned ${Math.round(hh.wages)} gold in wages today${f.wageCut ? ' (cut: the treasury ran short)' : ''} and spent it on bread and ${(hh.goods * hh.folk).toFixed(0)} goods. ` : ''}Prices are in gold: ▲ dearer than the world price, ▼ cheaper. Treasury ${Math.floor(f.gold)} gold. Homes for ${f.housing}. Each season: ${u.wood} wood and ${u.stone} stone of upkeep, ${f.soldiersPay} gold for soldiers${f.fuel() ? `, ${f.fuel()} wood a day for fuel` : ''}. ${f.spent ? `Spent ${f.spent} gold on fairs and feasts last season. ` : ''}Storage ${f.cap}.${f.decay ? ' Buildings are crumbling for want of upkeep.' : ''}${f.unpaid ? ' The soldiers went unpaid.' : ''}`);
   }
   // world prices exist only where goods change hands: a line of the last six years for each good, and who sells cheapest and buys dearest
   market() {
@@ -3543,7 +3654,8 @@ class Interface {
       if (b.type === 'quarry') return `<b>${B.name}</b> of ${f.name} · stone that never runs out, ${B.slots} miners`;
       if (b.type === 'forester') return `<b>${B.name}</b> of ${f.name} · fells grown trees and replants the grove around it`;
       if (B.slots) return `<b>${B.name}</b> of ${f.name} · yields ${f.farmYield(b)} a trip`;
-      if (B.house) return `<b>${B.name}</b> of ${f.name} · home for ${B.house}`;
+      if (b.type === 'workshop') return `<b>${B.name}</b> of ${f.name} · artisans turn spare wood${f.era >= 3 ? ' and stone' : ''} into goods`;
+      if (B.house) return `<b>${B.name}</b> of ${f.name} · home for ${B.house}${b.tier !== undefined ? ` · a ${CLASS[b.tier]} household, ${Math.floor(b.cash || 0)} gold saved` : ''}`;
       if (B.def) return `<b>${B.name}</b> of ${f.name} · adds ${B.def} defense`;
       return `<b>${B.name}</b> of ${f.name}`;
     }
