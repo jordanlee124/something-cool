@@ -434,6 +434,8 @@ const ERA_LOOK = [
   { wall: '#9c4a36', roof: '#4b4f57', win: '#f6dc8a' },
   { wall: '#cfd5da', roof: '#5d7a95', win: '#bfe3f5' },
 ];
+// walking speed on open ground, a worn path, a paved street and a trade road
+const ROAD_SPEED = [1, 1.25, 1.5, 1.6];
 const HOUSING = ['tc', 'hut', 'house', 'manor'];
 const LANDMARKS = ['chapel', 'market', 'cathedral', 'castle', 'palace'];
 const FACTION_NAMES = ['Thornbury', 'Greywater', 'Oakhurst', 'Larkspur', 'Ravensby', 'Millhaven', 'Stonebridge', 'Kestrel Hill', 'Ashford', 'Hollowell', 'Wyndham', 'Fallowmere', 'Corrowmere', 'Brackenhold', 'Northcombe', 'Eastwick', 'Dunhallow', 'Ironbrook',
@@ -482,6 +484,8 @@ class Tile {
   constructor(t, amt, h) { this.t = t; this.amt = amt; this.h = h; this.sap = 0; this.foot = 0; this.b = 0; this.c = 0; this.own = 0; }
   get water() { return this.t === 3; }
   get open() { return this.t === 0 || this.t === 1; }
+  // how fast people cross this tile: worn paths, paved streets and trade roads are quicker than open ground
+  get speed() { return this.road ? ROAD_SPEED[3] : this.foot > 160 ? ROAD_SPEED[2] : this.foot > 60 ? ROAD_SPEED[1] : 1; }
 }
 
 // The world is a rectangle of chunks that grows outward as settlements need land.
@@ -517,7 +521,7 @@ class World {
     return sides;
   }
   ensure(x0, y0, x1, y1) { return this.growTo(Math.floor(x0 / CS), Math.floor(y0 / CS), Math.floor(x1 / CS), Math.floor(y1 / CS)); }
-  // breadth-first search inside a box around the trip, widened once if the trip has to go around a lake.
+  // the quickest walk (A*, roads count as cheaper ground) inside a box around the trip, widened once if the trip has to go around a lake.
   // With a realm f, other realms' land is closed unless f holds an open-borders treaty with them.
   // Someone already standing on closed land (the border moved under them) may walk out through it.
   findPath(sx, sy, tx, ty, f) {
@@ -530,7 +534,9 @@ class World {
       if (own && !pass[own]) pass = Object.assign({}, pass, { [own]: true });
     }
     // workers walk the same trips over and over, so remember routes until borders, treaties or the map change
-    if (!this.fresh(this._pathStamp) || this._paths.size > 4000) { this._paths = new Map(); this._pathStamp = this.stampNow(false); }
+    // paths wear in and fade over time, so routes are also forgotten each season
+    const season = G.year * 4 + G.season;
+    if (!this.fresh(this._pathStamp) || this._paths.size > 4000 || this._pathSeason !== season) { this._paths = new Map(); this._pathStamp = this.stampNow(false); this._pathSeason = season; }
     const n = this.w * this.h, id = ((f ? f.id : 0) * n + this.idx(sx, sy)) * n + this.idx(tx, ty);
     let p = this._paths.get(id);
     if (p === undefined) { p = this.searchBox(sx, sy, tx, ty, 10, pass) || this.searchBox(sx, sy, tx, ty, 40, pass); this._paths.set(id, p); }
@@ -570,26 +576,50 @@ class World {
   searchBox(sx, sy, tx, ty, m, pass) {
     const bx0 = Math.max(this.x0, Math.min(sx, tx) - m), by0 = Math.max(this.y0, Math.min(sy, ty) - m);
     const bx1 = Math.min(this.x1 - 1, Math.max(sx, tx) + m), by1 = Math.min(this.y1 - 1, Math.max(sy, ty) + m);
-    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
-    const prev = new Int32Array(bw * bh).fill(-1), start = (sy - by0) * bw + (sx - bx0), goal = (ty - by0) * bw + (tx - bx0);
-    if (goal < 0 || goal >= bw * bh || tx < bx0 || tx > bx1) return null;
-    const q = [start]; prev[start] = start;
-    for (let i = 0; i < q.length; i++) {
-      const cur = q[i];
-      if (cur === goal) break;
-      const x = cur % bw, y = (cur / bw) | 0;
-      for (const [dx, dy] of N4) {
-        const nx = x + dx, ny = y + dy;
+    const bw = bx1 - bx0 + 1, bh = by1 - by0 + 1, nb = bw * bh;
+    if (tx < bx0 || tx > bx1 || ty < by0 || ty > by1) return null;
+    const start = (sy - by0) * bw + (sx - bx0), goal = (ty - by0) * bw + (tx - bx0);
+    // scratch arrays are reused between searches: a stamp marks which entries belong to this one
+    if (!this._sb || this._sb.n < nb) this._sb = { n: nb, prev: new Int32Array(nb), g: new Float32Array(nb), seen: new Uint32Array(nb), done: new Uint32Array(nb), heap: new Int32Array(nb * 4), f: new Float32Array(nb * 4), run: 0 };
+    const S = this._sb, prev = S.prev, gs = S.g, seen = S.seen, done = S.done, heap = S.heap, fs = S.f, run = ++S.run;
+    const hk = 1 / ROAD_SPEED[3];
+    const h = n => (Math.abs(n % bw - (tx - bx0)) + Math.abs(((n / bw) | 0) - (ty - by0))) * hk;
+    let hn = 0;
+    const push = (n, f) => {
+      let i = hn++;
+      while (i > 0) { const p = (i - 1) >> 1; if (fs[p] <= f) break; heap[i] = heap[p]; fs[i] = fs[p]; i = p; }
+      heap[i] = n; fs[i] = f;
+    };
+    const pop = () => {
+      const top = heap[0], ln = heap[--hn], lf = fs[hn];
+      let i = 0;
+      for (;;) { let c = 2 * i + 1; if (c >= hn) break; if (c + 1 < hn && fs[c + 1] < fs[c]) c++; if (fs[c] >= lf) break; heap[i] = heap[c]; fs[i] = fs[c]; i = c; }
+      heap[i] = ln; fs[i] = lf;
+      return top;
+    };
+    seen[start] = run; gs[start] = 0; prev[start] = start; push(start, h(start));
+    let found = false;
+    while (hn) {
+      if (hn >= heap.length - 4) break;   // never in practice: each tile is queued at most a few times
+      const cur = pop();
+      if (done[cur] === run) continue;
+      done[cur] = run;
+      if (cur === goal) { found = true; break; }
+      const x = cur % bw, y = (cur / bw) | 0, gc = gs[cur];
+      for (let k = 0; k < 4; k++) {
+        const nx = x + N4[k][0], ny = y + N4[k][1];
         if (nx < 0 || ny < 0 || nx >= bw || ny >= bh) continue;
         const n = ny * bw + nx;
-        if (prev[n] !== -1) continue;
+        if (done[n] === run) continue;
         const T = this.tiles[(ny + by0 - this.y0) * this.w + (nx + bx0 - this.x0)];
         if (pass && T.own && !pass[T.own]) continue;
         if (n !== goal && T.t === 3) continue;
-        prev[n] = cur; q.push(n);
+        const g = gc + 1 / T.speed;
+        if (seen[n] === run && gs[n] <= g) continue;
+        seen[n] = run; gs[n] = g; prev[n] = cur; push(n, g + h(n));
       }
     }
-    if (prev[goal] === -1) return null;
+    if (!found) return null;
     const out = [];
     for (let n = goal; n !== start; n = prev[n]) out.push({ x: n % bw + bx0, y: ((n / bw) | 0) + by0 });
     return out.reverse();
@@ -823,15 +853,18 @@ class Colonist {
   }
   update(dt) {
     if (this.path.length) {
-      let move = SPEED * (this.home.age >= 3 ? 1.15 : 1) * (1 + this.home.fx('walk')) * dt;
-      while (move > 0 && this.path.length) {
+      // time left this step; each stretch goes at the speed of the ground it leads onto
+      const base = SPEED * (this.home.age >= 3 ? 1.15 : 1) * (1 + this.home.fx('walk'));
+      let left = dt;
+      while (left > 0 && this.path.length) {
         const n = this.path[0], dx = n.x - this.x, dy = n.y - this.y, d = Math.hypot(dx, dy);
-        if (d <= move) {
-          this.x = n.x; this.y = n.y; this.path.shift(); move -= d;
+        const N = G.world.tile(n.x, n.y), v = base * (N ? N.speed : 1);
+        if (d <= v * left) {
+          this.x = n.x; this.y = n.y; this.path.shift(); left -= d / v;
           const T = G.world.tile(n.x, n.y);
           if (T && T.foot < 400) { T.foot += 1; if (T.foot === 13 || T.foot === 61 || T.foot === 161) G.world.touch(n.x, n.y); }
           if (this.path.length && this.barred(T, this.path[0])) { this.path = []; this.st = 'idle'; this.wait = 0.5; return; }
-        } else { this.x += dx / d * move; this.y += dy / d * move; move = 0; }
+        } else { this.x += dx / d * v * left; this.y += dy / d * v * left; left = 0; }
       }
       if (!this.path.length) this.arrive();
       return;
@@ -1867,6 +1900,7 @@ class Trade {
       C.record(`Merchants opened ${r.name} between ${a.name} and ${b.name}.`, 'good', a);
       if (Math.max(a.age, b.age) >= 3 && this.routes.length <= 3) C.card('Trade', `${upper(r.name)} opens`, `Caravans will carry goods between ${a.name} and ${b.name}.`, a);
     }
+    this.markRoads();
     for (const r of this.routes) {
       const n = this.caravans.filter(c => c.r === r).length;
       if (n < 2 && rnd() < 0.35) { const back = rnd() < 0.5, from = back ? r.b : r.a, fr = G.F(from); this.caravans.push({ r, from, to: back ? r.a : r.b, back, d: 0, sp: 1 + (fr ? fr.fx('cart') : 0), era: fr ? fr.era : 0 }); }
@@ -1887,6 +1921,16 @@ class Trade {
       G.dip.rel[key(from.id, to.id)] = clamp(G.dip.relOf(from, to) + 0.5, -100, 100);
       if (to.tc) View.float(to.tc.x, to.tc.y, '⚖', '#f0d9a0');
     }
+  }
+  // the ground under every open road is marked so people walk it faster; redone when a road opens, closes or is re-laid
+  markRoads() {
+    const sig = this.routes.map(r => r.id + ':' + r._s + ':' + (r._p ? r._p.length : 0)).join('|');
+    if (sig === this._roadSig) return;
+    this._roadSig = sig;
+    const W = G.world;
+    for (const T of this._roadTiles || []) T.road = 0;
+    this._roadTiles = [];
+    for (const r of this.routes) for (const p of r._p || []) { const T = W.tile(p.x, p.y); if (T && !T.road) { T.road = 1; this._roadTiles.push(T); } }
   }
   // where a caravan is on its road, in tile coordinates
   at(c) {
@@ -2967,7 +3011,8 @@ class Interface {
     if (T.t === 2) return `<b>Rock</b> · ${T.amt} stone left${land}`;
     if (T.t === 3) return '<b>Lake</b>';
     if (T.sap) return `<b>Saplings</b> · forest again in ${T.sap} days${land}`;
-    return `<b>${T.foot > 20 ? 'Footpath' : 'Meadow'}</b>${land}`;
+    const way = T.road ? 'Trade road' : T.foot > 160 ? 'Paved street' : T.foot > 60 ? 'Footpath' : T.foot > 20 ? 'Faint track' : 'Meadow';
+    return `<b>${way}</b>${T.speed > 1 ? ` · walkers move ${Math.round((T.speed - 1) * 100)}% faster` : ''}${land}`;
   }
   tap(e) {
     if (!G || !R.cam) return;
