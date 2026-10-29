@@ -21,6 +21,7 @@ namespace EmberVale.Sim
         };
 
         int lastDay = 1;
+        const int WantStone = 30;   // Settlement.want('stone') at age 0: 30 + age * 30 + upkeep (no stone upkeep yet)
 
         /// <summary>0 spring, 1 summer, 2 autumn, 3 winter.</summary>
         public int Season => ((Day - 1) % K.YEAR) / K.SEASON_DAYS;
@@ -66,7 +67,12 @@ namespace EmberVale.Sim
             var want = new Dictionary<string, int>();
             want["farmer"] = Math.Min(slots, Math.Max(1, (int)Math.Ceiling(pop * share)));
             want["builder"] = sites > 0 ? Math.Min((int)Math.Ceiling(sites * 1.6), Math.Max(1, (int)Math.Ceiling(pop * 0.18))) : 0;
-            int rest = pop - want["farmer"] - want["builder"];
+            // workers go where the town is short: miners until the stone store reaches what the village wants
+            bool stoneHungry = s.Stone < Math.Min(cap * 0.85, WantStone * 2);
+            want["miner"] = stoneHungry ? Math.Max(1, (int)Math.Ceiling(pop * 0.15)) : 0;
+            int rest = pop - want["farmer"] - want["builder"] - want["miner"];
+            if (rest < 0) { int cut = Math.Min(want["miner"], -rest); want["miner"] -= cut; rest += cut; }   // short of hands: miners wait first
+            if (rest < 0) { int cut = Math.Min(Math.Max(0, want["builder"] - (sites > 0 ? 1 : 0)), -rest); want["builder"] -= cut; rest += cut; }
             want["woodcutter"] = Math.Max(0, rest);
             // more wood than the village can hold is no use: spare hands tend the fields instead
             if (s.Wood >= cap * 0.95 && want["woodcutter"] > 1)
@@ -75,11 +81,12 @@ namespace EmberVale.Sim
                 want["woodcutter"] -= m;
                 int room = Math.Max(0, slots - want["farmer"]);
                 int toFarm = Math.Min(m, room);
-                want["farmer"] += toFarm; want["builder"] += m - toFarm;
+                if (stoneHungry) want["miner"] += m;
+                else { want["farmer"] += toFarm; want["builder"] += m - toFarm; }
             }
-            var have = new Dictionary<string, int> { { "farmer", 0 }, { "builder", 0 }, { "woodcutter", 0 } };
+            var have = new Dictionary<string, int> { { "farmer", 0 }, { "builder", 0 }, { "miner", 0 }, { "woodcutter", 0 } };
             foreach (var c in s.People) have[c.Job]++;
-            foreach (var k in new[] { "farmer", "builder", "woodcutter" })
+            foreach (var k in new[] { "farmer", "builder", "miner", "woodcutter" })
             {
                 while (have[k] > want[k])
                 {
@@ -88,7 +95,7 @@ namespace EmberVale.Sim
                     if (o == null) foreach (var c in s.People) if (c.Job == k && c.Carry == null) { o = c; break; }
                     if (o == null) foreach (var c in s.People) if (c.Job == k) { o = c; break; }
                     string to = null;
-                    foreach (var j in new[] { "farmer", "builder", "woodcutter" }) if (have[j] < want[j]) { to = j; break; }
+                    foreach (var j in new[] { "farmer", "builder", "miner", "woodcutter" }) if (have[j] < want[j]) { to = j; break; }
                     if (o == null || to == null) break;
                     o.Job = to; have[k]--; have[to]++;
                     if (o.Carry == null) { o.State = Act.Idle; o.Path.Clear(); o.Wait = 0; o.TargetBuilding = 0; }
@@ -200,7 +207,9 @@ namespace EmberVale.Sim
                 if (best == null) return false;
                 tid = best.Id; tx = best.X; ty = best.Y; return true;
             }
-            // woodcutter: nearest tree not already taken, preferring trees near the hall
+            // woodcutter / miner: nearest tree or rock not already taken, preferring ones near the hall
+            // shortcut: miners take loose rock only; quarries come with the later ages
+            var kind = c.Job == "miner" ? Ground.Rock : Ground.Forest;
             var drop = Drop(s, c.X, c.Y);
             foreach (int r in new[] { 10, 26 })
             {
@@ -209,8 +218,8 @@ namespace EmberVale.Sim
                     for (int x = Math.Max(World.X0, cx - r); x <= Math.Min(World.X1 - 1, cx + r); x++)
                     {
                         var T = World.At(x, y);
-                        if (T.T != Ground.Forest || T.Amt <= 0 || T.Building != 0) continue;
-                        int taken = ClaimsOn(s, c, o => o.Job == "woodcutter" && o.TargetBuilding == 0 && o.TX == x && o.TY == y && o.State != Act.Idle);
+                        if (T.T != kind || T.Amt <= 0 || T.Building != 0) continue;
+                        int taken = ClaimsOn(s, c, o => o.Job == c.Job && o.TargetBuilding == 0 && o.TX == x && o.TY == y && o.State != Act.Idle);
                         if (taken >= 2) continue;
                         double d = Dist(c.X, c.Y, x, y) * 0.5 + taken * 3;
                         if (d >= bestD) continue;
@@ -261,6 +270,7 @@ namespace EmberVale.Sim
             {
                 if (c.Carry == "food") s.Food = Math.Min(K.CAP, s.Food + c.CarryN);
                 else if (c.Carry == "wood") s.Wood = Math.Min(K.CAP, s.Wood + c.CarryN);
+                else if (c.Carry == "stone") s.Stone = Math.Min(K.CAP, s.Stone + c.CarryN);
                 c.Carry = null; c.CarryN = 0; c.State = Act.Idle; c.Wait = 0.2;
             }
             else { c.State = Act.Idle; c.Wait = 1 + Rng.Next() * 2; }
@@ -285,17 +295,18 @@ namespace EmberVale.Sim
                 c.Work += dt;
                 if (c.Work >= 5) { c.Carry = "food"; c.CarryN = FarmYield(s); GoStore(s, c); }
             }
-            else if (c.Job == "woodcutter")
+            else if (c.Job == "woodcutter" || c.Job == "miner")
             {
+                bool cut = c.Job == "woodcutter";
                 var T = World.At(c.TX, c.TY);
-                if (T == null || T.T != Ground.Forest || T.Amt <= 0) { Quit(c); return; }
+                if (T == null || T.T != (cut ? Ground.Forest : Ground.Rock) || T.Amt <= 0) { Quit(c); return; }
                 c.Work += dt;
-                if (c.Work >= 5)
+                if (c.Work >= (cut ? 5 : 6))
                 {
-                    int n = Math.Min(3, T.Amt);
+                    int n = Math.Min(cut ? 3 : 2, T.Amt);
                     T.Amt -= n;
                     if (T.Amt <= 0) { T.T = Ground.Meadow; T.Amt = 0; TileChanged?.Invoke(c.TX, c.TY); }
-                    c.Carry = "wood"; c.CarryN = n; GoStore(s, c);
+                    c.Carry = cut ? "wood" : "stone"; c.CarryN = n; GoStore(s, c);
                 }
             }
             else
