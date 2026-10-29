@@ -40,10 +40,10 @@ namespace EmberVale.View
             var centre = view.WorldCentre();
             float h = game.World.H, w = game.World.W;
             float fov = cam.fieldOfView * Mathf.Deg2Rad;
-            float needH = h * 0.62f / Mathf.Tan(fov / 2);
-            float needW = w * 0.62f / (Mathf.Tan(fov / 2) * cam.aspect);
+            float needH = h * 0.75f / Mathf.Tan(fov / 2);
+            float needW = w * 0.75f / (Mathf.Tan(fov / 2) * cam.aspect);
             float dist = Mathf.Max(needH, needW);
-            var rot = Quaternion.Euler(62, 0, 0);
+            var rot = Quaternion.Euler(70, 0, 0);
             cam.transform.rotation = rot;
             cam.transform.position = centre - rot * Vector3.forward * dist;
         }
