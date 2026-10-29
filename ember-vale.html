@@ -2650,7 +2650,7 @@ class Settlement {
 
 // ========== barbarians in the wilds ==========
 class Camp {
-  constructor(d) { Object.assign(this, d); }
+  constructor(d) { Object.assign(this, { raids: 0, loot: 0, band: 0, hunted: 0 }, d); }
   static spawnDaily() {
     const total = G.cols.length, maxAge = Math.max(0, ...G.alive().map(f => f.age)), W = G.world;
     if (G.year < 2 || G.camps().length >= Math.min(3 + Math.floor(W.w * W.h / 4000), 1 + Math.floor(maxAge / 2)) || rnd() >= 0.025) return;
@@ -2673,42 +2673,82 @@ class Camp {
       const T = W.tile(site.x + dx, site.y + dy);
       if (T && T.open && !T.b && !T.c && !T.own) { T.c = c.id; if (T.t === 1) { T.t = 0; T.amt = 0; } T.sap = 0; c.tents.push({ x: site.x + dx, y: site.y + dy }); }
     }
-    G.camps_.push(c); W.touchAll();
+    c.stg = c.stage; G.camps_.push(c); W.touchAll();
     G.chron.note(`Barbarians of the ${name} have made camp in the wilds.`, 'bad');
     View.toast(`The ${name} made camp in the wilds`, 'bad');
   }
+  get stage() { return this.str >= 28 ? 2 : this.str >= 14 ? 1 : 0; }
+  get cap() { return 45 + Math.min(25, this.loot / 30); }
+  // the camp grows as it gets stronger: more tents, then a stockade, then a war camp with a totem
+  grow() {
+    const W = G.world, want = [3, 5, 7][this.stage];
+    for (let guard = 0; this.tents.length < want && guard < 8; guard++) {
+      const base = pick(this.tents), d = pick(N4), x = base.x + d[0], y = base.y + d[1], T = W.tile(x, y);
+      if (T && T.open && !T.b && !T.c && !T.own && !this.tents.some(p => p.x === x && p.y === y)) { T.c = this.id; if (T.t === 1) { T.t = 0; T.amt = 0; } T.sap = 0; this.tents.push({ x, y }); W.touch(x, y); }
+    }
+  }
   daily(total) {
-    this.str = Math.min(45, this.str + 0.25 + total / 1200);
+    this.str = this.str > this.cap ? this.str - 0.1 : Math.min(this.cap, this.str + 0.25 + total / 1200);
+    if (this.stg === undefined) this.stg = this.stage;
+    if (this.stage !== this.stg) {
+      if (this.stage > this.stg) G.chron.note(`The ${this.name} ${this.stage === 1 ? 'raised a stockade round their tents' : 'have grown into a war camp, with a totem hung with skulls'}.`, 'bad');
+      this.stg = this.stage; this.grow();
+    }
+    if (this.hunted && !G.armies.some(r => r.id === this.hunted)) this.hunted = 0;
+    if (this.band && !G.armies.some(r => r.id === this.band)) this.band = 0;
     const str = Math.floor(this.str);
     const fs = G.alive().map(f => ({ f, d: Math.hypot(f.cx - this.x, f.cy - this.y) })).sort((p, q) => p.d - q.d);
     if (!fs.length) return;
-    const hunter = fs.find(p => p.d < 20 && p.f.age >= 1 && p.f.defense >= str * 1.5);
-    if (hunter && rnd() < 0.06) {
-      this.end();
-      hunter.f.addRes('food', 20); hunter.f.addRes('wood', 20); hunter.f.addRes('stone', 10);
-      G.chron.note(`Soldiers of ${hunter.f.name} burned the ${this.name} camp and took their plunder.`, 'good');
-      G.chron.record(`${hunter.f.title} of ${hunter.f.name} burned the barbarian camp of the ${this.name}.`, 'good', hunter.f);
-      View.toast(`${hunter.f.name} destroyed the ${this.name}`, 'good');
-      return;
-    }
-    if (rnd() >= 0.05 + str / 400) return;
-    const near = fs.filter(p => p.d < 34);
+    // a realm with far stronger defences can burn a camp unaided; the guards of most realms go out against camps themselves (Army.hunt)
+    const hunter = fs.find(p => p.d < 20 && p.f.age >= 1 && p.f.defense >= str * 2.5);
+    if (hunter && rnd() < 0.02) { Camp.burn(this, hunter.f, 'Soldiers'); return; }
+    // a camp that has grown strong and old and raided often may give up the wilds and settle
+    if (this.str >= 38 && this.raids >= 4 && G.day - this.founded >= YEAR * 5 && G.alive().length < G.maxFactions + 2 && rnd() < 0.002) { this.settle(); return; }
+    // otherwise it sends a warband out, one at a time, against a town within reach
+    if (this.band || str < 6 || rnd() >= 0.04 + str / 500) return;
+    // not worth a march: a hamlet with nothing to take, or a town they plundered within the last quarter
+    const near = fs.filter(p => p.d < 34 && p.f.pop >= 12 && G.day - (p.f.sacked || -1e9) > YEAR / 4);
     if (!near.length) return;
-    let r0 = rnd() * near.reduce((n, p) => n + 1 / (p.d + 4), 0), target = near[0].f;
-    for (const p of near) if ((r0 -= 1 / (p.d + 4)) <= 0) { target = p.f; break; }
-    const def = target.defense, t = target.tc;
-    if (t) View.float(t.x, t.y, '⚔', '#ff6a5a');
-    if (def >= str) {
-      this.str = Math.max(2, this.str - 2);
-      G.chron.note(`The ${this.name} attacked ${target.name} and broke against its defenses.`, 'pol');
-    } else {
-      const lf = Math.floor(target.res.food * 0.25), lw = Math.floor(target.res.wood * 0.25), ls = Math.floor(target.res.stone * 0.15);
-      target.res.food -= lf; target.res.wood -= lw; target.res.stone -= ls; target.grief += 6; target.gold = Math.floor(target.gold * 0.8);
-      const dead = def < str * 0.75 ? target.killN(ri(1, 1 + Math.floor(str / 15))) : 0;
-      G.chron.note(`The ${this.name} raided ${target.name}${dead ? `, killing ${dead}` : ''}, and carried off ${lf} food and ${lw} wood.`, 'bad');
-      View.toast(`The ${this.name} raided ${target.name}`, 'bad');
-      if (!target.pop) target.fall(`was burned to the ground by the ${this.name}`);
+    const wt = p => 1 / ((p.d + 4) * (1 + p.f.defense / 25));   // they look for the weakest town in reach
+    let r0 = rnd() * near.reduce((n, p) => n + wt(p), 0), target = near[0].f;
+    for (const p of near) if ((r0 -= wt(p)) <= 0) { target = p.f; break; }
+    if (target.tc) Camp.launch(this, target);
+  }
+  // the warband is an army of its own that walks to the town (see Army.horde)
+  static launch(c, tgt) {
+    const n = clamp(Math.floor(c.str * 0.8), 4, 40);
+    const r = new Army({ id: G.nid++, f: 0, kind: 'horde', camp: c.id, to: tgt.id, st: 'march', x: c.x, y: c.y, n0: n, members: Array.from({ length: n }, () => ({ barb: 1 })) });
+    G.armies.push(r); c.band = r.id; c.raids++;
+    G.chron.note(`The ${c.name} marched on ${tgt.name} with a warband of ${n}.`, 'bad');
+  }
+  // a realm takes the camp, and the plunder is the realm's
+  static burn(c, f, by) {
+    c.end();
+    f.addRes('food', 20); f.addRes('wood', 20); f.addRes('stone', 10);
+    G.chron.note(`${by} of ${f.name} burned the ${c.name} camp and took their plunder.`, 'good');
+    G.chron.record(`${f.title} of ${f.name} burned the barbarian camp of the ${c.name}.`, 'good', f);
+    View.toast(`${f.name} destroyed the ${c.name}`, 'good');
+  }
+  // a strong old camp stops roving: its people raise a village where the tents stood, still at odds with the realm they raided most
+  settle() {
+    const W = G.world, x = this.x, y = this.y, fs = G.alive().map(f => ({ f, d: Math.hypot(f.cx - x, f.cy - y) })).sort((p, q) => p.d - q.d);
+    this.end();
+    for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) {
+      const T = W.tile(xx, yy);
+      if (T && (T.t === 1 || T.t === 2) && Math.hypot(xx - x, yy - y) < 1.7) { T.t = 0; T.amt = 0; T.sap = 0; }
     }
+    const f = G.found(null, x, y, null);
+    const T = W.tile(x - 2, y + 1);
+    if (T && !T.b && T.t !== 3) { T.t = 0; T.amt = 0; T.sap = 0; G.addBuilding(f, 'farm', x - 2, y + 1, true); }
+    ['farmer', 'farmer', 'woodcutter', 'woodcutter', 'builder', 'builder'].forEach(j => f.spawn(j));
+    f.gold += Math.floor(this.loot / 4); f.barbarian = this.name;
+    const foe = fs.find(p => p.f !== f && p.d < 40);
+    if (foe) G.dip.rel[key(f.id, foe.f.id)] = -40;
+    G.recomputeTerritory();
+    G.chron.note(`The ${this.name} gave up the wilds and raised ${f.name} where their camp stood.`, 'pol');
+    G.chron.record(`The ${this.name}, once barbarians, settled and founded ${f.name}.`, '', f);
+    View.toast(`The ${this.name} settled as ${f.name}`, 'pol');
+    View.float(x, y, 'founded!', f.color);
   }
   end() {
     this.gone = true;
@@ -2727,20 +2767,20 @@ class Camp {
 // The fighting is watch-only: the realms' stewards give all the orders.
 class Army {
   constructor(d) {
-    Object.assign(this, { st: 'march', kind: 'war', route: [], wait: 0, alert: false, path: [], acc: 0, dacc: 0, bd: 0, siegeDays: 0, x: 0, y: 0 }, d);
-    this.members = (d.members || []).map(m => m instanceof Colonist ? m : new Colonist(m));
+    Object.assign(this, { st: 'march', kind: 'war', route: [], wait: 0, alert: false, hunt: 0, camp: 0, n0: 0, loot: 0, path: [], acc: 0, dacc: 0, bd: 0, siegeDays: 0, x: 0, y: 0 }, d);
+    this.members = (d.members || []).map(m => m instanceof Colonist || m.barb ? m : new Colonist(m));
   }
   get n() { return this.members.length; }
   toJSON() {
-    return { id: this.id, f: this.f, to: this.to, st: this.st, kind: this.kind, route: this.route, wait: this.wait, alert: this.alert, x: this.x, y: this.y, path: this.path, acc: this.acc, dacc: this.dacc,
-      bd: this.bd, siegeDays: this.siegeDays, members: this.members.map(m => m.toJSON()) };
+    return { id: this.id, f: this.f, to: this.to, st: this.st, kind: this.kind, route: this.route, wait: this.wait, alert: this.alert, hunt: this.hunt, camp: this.camp, n0: this.n0, loot: this.loot, x: this.x, y: this.y, path: this.path, acc: this.acc, dacc: this.dacc,
+      bd: this.bd, siegeDays: this.siegeDays, members: this.members.map(m => m.barb ? m : m.toJSON()) };
   }
   static bdef(f) { let n = 0; for (const b of f.buildings) if (b.built) n += BUILD[b.type].def || 0; return n + (f.hasWonder('wall') ? 30 : 0); }
   static tryMuster(a, b) { if (G.dip.stanceOf(a, b) === 'war' && rnd() < 0.1) Army.muster(a, b); }
   // soldiers leave a town to march on b, if the town can match b's defence and has enough soldiers to make the march worth it.
   // The army is the largest patrol marching out as it stands, with any other patrol close by and the recruits waiting at the barracks.
   static muster(a, b) {
-    const war = G.armies.filter(r => r.kind !== 'patrol');
+    const war = G.armies.filter(r => r.kind !== 'patrol' && r.kind !== 'horde');
     if (!a.tc || !b.tc || war.length >= 8 || war.filter(r => r.f === a.id).length >= 2) return;
     if (war.some(r => r.f === a.id && r.to === b.id)) return;
     const pats = G.armies.filter(r => r.kind === 'patrol' && r.f === a.id && r.n).sort((p, q) => q.n - p.n);
@@ -2752,7 +2792,7 @@ class Army {
     let take = [];
     if (base) { take = base.members.slice(); for (const x of near) if (take.length + x.n <= 30) { take.push(...x.members); G.armies = G.armies.filter(y => y !== x); } }
     take.push(...Army.take(rec.slice(0, Math.max(0, 30 - take.length))));
-    if (base) { base.members = take; Object.assign(base, { kind: 'war', to: b.id, st: 'march', path: [], route: [], wait: 0, alert: false }); }
+    if (base) { base.members = take; Object.assign(base, { kind: 'war', to: b.id, st: 'march', path: [], route: [], wait: 0, alert: false, hunt: 0 }); }
     else G.armies.push(new Army({ id: G.nid++, f: a.id, to: b.id, x: a.tc.x, y: a.tc.y, members: take }));
     G.dirtyC();
     G.chron.note(`${a.name} mustered ${take.length} soldiers and marched on ${b.name}.`, 'bad');
@@ -2813,6 +2853,7 @@ class Army {
     return route;
   }
   static patrol(r, home, dt) {
+    if (r.hunt) return Army.hunt(r, home, dt);
     if (r.wait > 0) { r.wait -= dt; return; }
     if (!r.route.length) r.route = Army.plan(home);
     const d = Army.walk(r, r.route[0], dt, true);
@@ -2820,6 +2861,74 @@ class Army {
       r.route.shift(); r.path = [];
       if (!r.route.length) { r.wait = r.alert ? 0 : 6 + rnd() * 8; r.alert = false; }
     }
+  }
+  // patrols and defenders at the walls: every formation of the town falls back to its centre
+  static alert(t) { for (const x of G.armies) if (x.kind === 'patrol' && x.f === t.id) { x.hunt = 0; x.route = [{ x: t.tc.x, y: t.tc.y }]; x.path = []; x.wait = 0; x.alert = true; } }
+  static drop(r) { G.armies = G.armies.filter(x => x !== r); }
+  // a barbarian warband: walks out from its camp to a town, fights the town's soldiers, patrols and walls, and if it wins plunders
+  // the town and goes home with the loot, which makes the camp stronger
+  static horde(r, dt) {
+    const c = G.camps_.find(x => x.id === r.camp && !x.gone), tgt = G.F(r.to);
+    if (!c || !r.n) { if (c && !r.n) { c.str = Math.max(2, c.str - 0.25 * r.n0); c.band = 0; } Army.drop(r); return; }   // the camp was burned while they were out, or they all fell
+    if (r.st === 'return') {
+      if (Army.walk(r, c, dt) < 1.5) { c.str = clamp(c.str - 0.25 * (r.n0 - r.n) + (r.loot ? 2 + Math.min(6, r.loot / 20) : 0), 2, c.cap); c.loot += r.loot; c.band = 0; Army.drop(r); }
+      return;
+    }
+    if (!tgt || tgt.gone || !tgt.tc) { r.st = 'return'; r.path = []; return; }
+    if (r.st === 'march') {
+      if (Army.walk(r, tgt.tc, dt) <= 4) {
+        r.st = 'raid'; r.bd = Army.bdef(tgt); r.path = [];
+        G.chron.note(`The ${c.name} warband reached the walls of ${tgt.name}.`, 'bad');
+        View.float(tgt.tc.x, tgt.tc.y, '⚔', '#ff6a5a');
+        Army.alert(tgt);
+      }
+    } else if (r.st === 'raid') Army.raidFight(r, c, tgt, dt);
+  }
+  static raidFight(r, c, tgt, dt) {
+    const ds = tgt.people.filter(p => p.job === 'soldier'), gd = Army.guards(tgt), dn = ds.length + gd.reduce((s, x) => s + x.n, 0) + r.bd, an = r.n;
+    if (!dn) { Army.sack(r, c, tgt); return; }
+    if (r.n0 >= 6 && an <= r.n0 * 0.35) { G.chron.note(`The ${c.name} warband fell back from the walls of ${tgt.name}.`, 'pol'); r.st = 'return'; r.path = []; return; }
+    r.acc += dt * 0.4 * dn / (an + dn);
+    while (r.acc >= 1 && r.members.length) { r.acc -= 1; r.members.splice(Math.floor(rnd() * r.members.length), 1); }
+    r.dacc += dt * 0.7 * an / (an + dn);   // fierce: they hit harder than a town's own soldiers do
+    while (r.dacc >= 1) {
+      r.dacc -= 1;
+      if (ds.length) G.kill(ds.splice(Math.floor(rnd() * ds.length), 1)[0]);
+      else if (gd.length) { const g = gd[Math.floor(rnd() * gd.length)]; g.members.splice(Math.floor(rnd() * g.members.length), 1); tgt.stats.died++; tgt.grief += 0.5; if (!g.n) gd.splice(gd.indexOf(g), 1); }
+      else if (r.bd > 0) r.bd--;
+      else break;
+    }
+    if (!r.n) G.chron.note(`The ${c.name} warband was destroyed at the walls of ${tgt.name}.`, 'good');
+  }
+  // the walls are open: the warband plunders the town and withdraws with what it can carry
+  static sack(r, c, tgt) {
+    const lf = Math.floor(tgt.res.food * 0.25), lw = Math.floor(tgt.res.wood * 0.25), ls = Math.floor(tgt.res.stone * 0.15), lg = Math.floor(tgt.gold * 0.2);
+    tgt.res.food -= lf; tgt.res.wood -= lw; tgt.res.stone -= ls; tgt.gold -= lg; tgt.grief += 6; tgt.sacked = G.day;
+    const dead = tgt.killN(ri(1, 1 + Math.floor(r.n / 8)));
+    r.loot = lf + lw + ls + lg; r.st = 'return'; r.path = [];
+    G.fires.push({ x: tgt.tc.x, y: tgt.tc.y, until: performance.now() + 9000 });
+    G.chron.note(`The ${c.name} warband sacked ${tgt.name}${dead ? `, killing ${dead}` : ''}, and carried off ${lf} food and ${lw} wood.`, 'bad');
+    View.toast(`The ${c.name} sacked ${tgt.name}`, 'bad');
+    if (!tgt.pop) tgt.fall(`was burned to the ground by the ${c.name}`);
+  }
+  // formations that have marched out against a camp: they walk there, fight it together (drilled soldiers hit harder than
+  // raiders), and burn it if it breaks
+  static hunt(r, home, dt) {
+    const c = G.camps_.find(x => x.id === r.hunt && !x.gone);
+    if (!c || G.armies.some(x => x.to === home.id && x.kind !== 'patrol')) { if (c && c.hunted === r.id) c.hunted = 0; r.hunt = 0; r.route = []; r.path = []; r.wait = 0; return; }   // the camp is gone, or war calls the guard home
+    if (Math.hypot(c.x - r.x, c.y - r.y) > 3.5) {
+      Army.walk(r, c, dt, true);
+      if (!r.path.length && Math.hypot(c.x - r.x, c.y - r.y) > 3.5) { r.hunt = 0; r.route = []; r.wait = 0; }   // no way through
+      return;
+    }
+    const grp = G.armies.filter(x => x.kind === 'patrol' && x.hunt === c.id && Math.hypot(c.x - x.x, c.y - x.y) <= 3.5);
+    if (grp[0] !== r) return;   // the first formation there runs the fight for all of them
+    const an = grp.reduce((s, x) => s + x.n, 0), cs = Math.max(2, Math.floor(c.str * 0.6)), eff = an * 1.3;
+    r.acc += dt * 0.4 * cs / (eff + cs);
+    while (r.acc >= 1 && grp.some(x => x.n)) { r.acc -= 1; const g = pick(grp.filter(x => x.n)); g.members.splice(Math.floor(rnd() * g.members.length), 1); const h = G.F(g.f); if (h) { h.stats.died++; h.grief += 0.5; } }
+    c.str -= dt * 0.6 * eff / (eff + cs);
+    if (!grp.some(x => x.n)) { G.chron.note(`The guard of ${home.name} was destroyed by the ${c.name}.`, 'bad'); c.hunted = 0; c.str = Math.min(c.cap, c.str + 2); return; }
+    if (c.str <= 2) { for (const x of grp) { x.hunt = 0; x.route = []; x.path = []; x.wait = 6; } c.hunted = 0; Camp.burn(c, home, 'The guard'); }
   }
   // the formations close to their own town's centre stand with its soldiers when an army reaches the walls
   static guards(t) { return G.armies.filter(x => x.kind === 'patrol' && x.f === t.id && x.n && Math.hypot(x.x - t.tc.x, x.y - t.tc.y) < 8); }
@@ -2853,6 +2962,7 @@ class Army {
     Army._t = (Army._t || 0) + dt;
     if (Army._t >= 2) { Army._t = 0; Army.formUp(); }
     for (const r of G.armies.slice()) {
+      if (r.kind === 'horde') { Army.horde(r, dt); continue; }
       const home = G.F(r.f);
       if (!home || home.gone || !home.tc) { Army.release(r, null); continue; }
       if (r.kind === 'patrol') { if (r.n) Army.patrol(r, home, dt); else Army.release(r, null); continue; }
@@ -2864,7 +2974,7 @@ class Army {
           r.st = 'battle'; r.bd = Army.bdef(tgt); r.path = [];
           G.chron.note(`The army of ${home.name} reached the walls of ${tgt.name}.`, 'bad');
           View.float(tgt.tc.x, tgt.tc.y, '⚔', '#ff6a5a');
-          for (const x of G.armies) if (x.kind === 'patrol' && x.f === tgt.id) { x.route = [{ x: tgt.tc.x, y: tgt.tc.y }]; x.path = []; x.wait = 0; x.alert = true; }
+          Army.alert(tgt);
         }
       } else if (r.st === 'battle') Army.fight(r, home, tgt, dt);
     }
@@ -2890,9 +3000,16 @@ class Army {
   static daily() {
     // more soldiers in service than the town wants, in peace: a formation resting at its barracks is dismissed
     for (const f of G.alive()) {
-      if (f.enemies.length) continue;
       const rest = G.armies.filter(r => r.kind === 'patrol' && r.f === f.id && r.wait > 0).sort((p, q) => p.n - q.n)[0];
-      if (rest && f.soldiers + f.marching > f.standingWanted() + 4) Army.release(rest, f);
+      if (rest && !f.enemies.length && f.soldiers + f.marching > f.standingWanted() + 4) { Army.release(rest, f); continue; }
+      // when the realm's formations together are strong enough they go out against a camp within reach
+      const grp = G.armies.filter(r => r.kind === 'patrol' && r.f === f.id && !r.hunt && r.n >= 3), total = grp.reduce((s, r) => s + r.n, 0);
+      const camp = grp.length && f.tc ? G.camps().filter(c => !c.hunted && Math.hypot(c.x - f.tc.x, c.y - f.tc.y) < 36).sort((p, q) => Math.hypot(p.x - f.tc.x, p.y - f.tc.y) - Math.hypot(q.x - f.tc.x, q.y - f.tc.y))[0] : null;
+      if (camp && total >= camp.str * 0.55 && !G.armies.some(x => x.to === f.id && x.kind !== 'patrol') && rnd() < 0.05) {
+        for (const q of grp) { q.hunt = camp.id; q.route = []; q.path = []; q.wait = 0; }
+        camp.hunted = grp[0].id;
+        G.chron.note(`The guard of ${f.name} marched out against the ${camp.name}, ${total} soldiers under ${grp.length} banner${grp.length > 1 ? 's' : ''}.`, 'pol');
+      }
     }
     for (const r of G.armies.slice()) {
       if (r.st !== 'siege') continue;
@@ -4563,6 +4680,16 @@ class Renderer {
       ctx.fillStyle = '#6b2f22'; tri(ctx, x + 0.12, y + 0.82, x + 0.5, y + 0.2, x + 0.88, y + 0.82);
       ctx.fillStyle = '#3a1a14'; tri(ctx, x + 0.4, y + 0.82, x + 0.5, y + 0.5, x + 0.6, y + 0.82);
     }
+    if (c.stage >= 1) {   // a stockade of sharpened stakes round the tents
+      const sx = c.x + 0.5, sy = c.y + 0.6, R = c.stage >= 2 ? 1.7 : 1.4;
+      ctx.strokeStyle = '#4a2a1a'; ctx.lineWidth = 0.07; ctx.beginPath();
+      for (let k = 0; k < 16; k++) { const a = k / 16 * 6.283, px = sx + Math.cos(a) * R, py = sy + Math.sin(a) * R * 0.8; ctx.moveTo(px, py); ctx.lineTo(px, py - 0.28); }
+      ctx.stroke();
+    }
+    if (c.stage >= 2) {   // a war camp has a totem hung with skulls
+      ctx.strokeStyle = '#2a1a10'; ctx.lineWidth = 0.08; ctx.beginPath(); ctx.moveTo(c.x + 1.25, c.y + 0.9); ctx.lineTo(c.x + 1.25, c.y - 0.75); ctx.stroke();
+      ctx.fillStyle = '#e8dcc0'; for (const dy of [-0.6, -0.3]) { ctx.beginPath(); ctx.arc(c.x + 1.25, c.y + dy, 0.1, 0, 7); ctx.fill(); }
+    }
     const fl = this.reduced ? 0.5 : 0.5 + 0.5 * Math.sin(performance.now() / 90 + c.id);
     ctx.fillStyle = '#f08a24'; ctx.beginPath(); ctx.arc(c.x + 0.5, c.y + 1.02, 0.1 + fl * 0.05, 0, 7); ctx.fill();
     ctx.fillStyle = '#ffd25a'; ctx.beginPath(); ctx.arc(c.x + 0.5, c.y + 1.02, 0.05, 0, 7); ctx.fill();
@@ -4661,8 +4788,8 @@ class Renderer {
   drawArmies(ctx, inView, now, rad) {
     for (const r of G.armies) {
       if (!r.members.length || !inView({ x: r.x, y: r.y })) continue;
-      const home = G.F(r.f), col = home ? home.color : '#e8d9b0', x = r.x + 0.5, y = r.y + 0.5, n = Math.min(r.members.length, 30);
-      ctx.strokeStyle = '#1f1a14'; ctx.lineWidth = rad * 0.3; ctx.fillStyle = col; ctx.beginPath();
+      const home = G.F(r.f), col = r.kind === 'horde' ? '#1c1410' : home ? home.color : '#e8d9b0', x = r.x + 0.5, y = r.y + 0.5, n = Math.min(r.members.length, 30);
+      ctx.strokeStyle = '#1f1a14'; ctx.lineWidth = rad * 0.3; ctx.fillStyle = r.kind === 'horde' ? '#6a3a2c' : col; ctx.beginPath();
       for (let i = 0; i < n; i++) {
         const c = i % 6, rw = Math.floor(i / 6), px = x - 0.45 + c * 0.18 + (rw % 2) * 0.05, py = y - 0.05 + rw * 0.16 + (r.st === 'march' || (r.kind === 'patrol' && r.wait <= 0) ? Math.sin(now / 150 + i) * 0.015 : 0);
         ctx.moveTo(px + rad * 0.9, py); ctx.arc(px, py, rad * 0.9, 0, 7);
@@ -4678,17 +4805,18 @@ class Renderer {
       ctx.fillStyle = r.kind === 'patrol' ? '#e0b43a' : '#c62f2a'; ctx.fillRect(x - 0.55, y - 0.74, 0.5, 0.05);
       ctx.fillStyle = '#f6ecc9';
       const em = r.id % 4, ex = x - 0.3, ey = y - 0.91;
-      if (em === 0) ctx.fillRect(ex - 0.2, ey - 0.03, 0.4, 0.06);
+      if (r.kind === 'horde') { ctx.beginPath(); ctx.arc(ex, ey - 0.01, 0.1, 0, 7); ctx.fill(); ctx.fillStyle = '#1c1410'; ctx.fillRect(ex - 0.06, ey - 0.03, 0.04, 0.04); ctx.fillRect(ex + 0.02, ey - 0.03, 0.04, 0.04); ctx.fillRect(ex - 0.02, ey + 0.04, 0.04, 0.04); }
+      else if (em === 0) ctx.fillRect(ex - 0.2, ey - 0.03, 0.4, 0.06);
       else if (em === 1) { tri(ctx, ex - 0.16, ey + 0.08, ex, ey - 0.1, ex + 0.16, ey + 0.08); }
       else if (em === 2) { tri(ctx, ex - 0.12, ey, ex, ey - 0.12, ex + 0.12, ey); tri(ctx, ex - 0.12, ey, ex, ey + 0.12, ex + 0.12, ey); }
       else { ctx.beginPath(); ctx.arc(ex, ey, 0.08, 0, 7); ctx.fill(); }
-      if (r.st === 'battle' || r.st === 'siege') {
+      if (r.st === 'battle' || r.st === 'siege' || r.st === 'raid') {
         const t = G.F(r.to), tc = t && t.tc;
         if (!tc) continue;
         const tx = tc.x + 0.5, ty = tc.y + 0.5;
-        ctx.strokeStyle = r.st === 'battle' ? '#ff6a5a' : '#c8c8c8'; ctx.lineWidth = rad * 0.5;
+        ctx.strokeStyle = r.st === 'siege' ? '#c8c8c8' : '#ff6a5a'; ctx.lineWidth = rad * 0.5;
         ctx.beginPath(); ctx.arc(tx, ty, 1.6 + Math.sin(now / 180) * 0.25, 0, 7); ctx.stroke();
-        if (r.st === 'battle') { ctx.fillStyle = 'rgba(255,220,180,.8)'; for (let k = 0; k < 3; k++) { const a = now / 120 + k * 2.1; ctx.beginPath(); ctx.arc(tx + Math.cos(a) * 1.1, ty + Math.sin(a) * 1.1, rad * 0.5, 0, 7); ctx.fill(); } }
+        if (r.st !== 'siege') { ctx.fillStyle = 'rgba(255,220,180,.8)'; for (let k = 0; k < 3; k++) { const a = now / 120 + k * 2.1; ctx.beginPath(); ctx.arc(tx + Math.cos(a) * 1.1, ty + Math.sin(a) * 1.1, rad * 0.5, 0, 7); ctx.fill(); } }
         else for (let k = 0; k < 5; k++) { const q = ((now / 1600) + k / 5) % 1; ctx.fillStyle = `rgba(110,110,110,${(1 - q) * 0.55})`; ctx.beginPath(); ctx.arc(tx + (k % 2 - 0.5) * 1.0 + q * 0.3, ty - 0.5 - q * 1.8, 0.2 + q * 0.3, 0, 7); ctx.fill(); }
       }
     }
@@ -4736,7 +4864,7 @@ class Renderer {
     const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, ring: f.faith ? (G.faiths.get(f.faith) || {}).color : '', sel: f.id === UI.sel }; })
       .concat(G.camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })))
       .concat(G.bands.map(b => ({ x: b.x, y: b.y, text: `${b.name} · ${b.n} settlers`, col: '#fff6d8', dot: b.color })))
-      .concat(G.armies.filter(r => r.members.length).map(r => { const h = G.F(r.f); return { x: r.x, y: r.y, text: `${h ? h.name : 'Army'} ${r.kind === 'patrol' ? 'guard' : 'army'} · ${r.members.length}`, col: '#ffd8d0', dot: h ? h.color : '#c62f2a' }; }));
+      .concat(G.armies.filter(r => r.members.length).map(r => { const h = G.F(r.f), cp = r.kind === 'horde' ? G.camps_.find(x => x.id === r.camp) : null; return { x: r.x, y: r.y, text: cp ? `${cp.name} warband · ${r.members.length}` : `${h ? h.name : 'Army'} ${r.kind === 'patrol' ? 'guard' : 'army'} · ${r.members.length}`, col: '#ffd8d0', dot: cp ? '#16100c' : h ? h.color : '#c62f2a' }; }));
     ctx.font = `700 ${kc > 20 ? 12 : 10.5}px Figtree, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const it of items) {
       let sx = (it.x + 0.5 - cam.x) * kc, sy = (it.y - 0.95 - cam.y) * kc;
@@ -5000,7 +5128,7 @@ class Interface {
     const T = W.tile(sel.x, sel.y);
     if (!T) return 'Beyond the edge of the known world.';
     const owner = T.own ? G.F(T.own) : null, land = owner ? ` · land of ${owner.name}` : ' · unclaimed wilds';
-    if (T.c) { const c = G.camps_.find(x => x.id === T.c); if (c) return `<b>${c.name}</b> · barbarian camp · strength ${Math.floor(c.str)}`; }
+    if (T.c) { const c = G.camps_.find(x => x.id === T.c); if (c) return `<b>${c.name}</b> · barbarian ${['camp', 'stockade', 'war camp'][c.stage]} · strength ${Math.floor(c.str)}${c.raids ? ` · ${c.raids} warband${c.raids > 1 ? 's' : ''} sent` : ''}${G.armies.some(r => r.id === c.band) ? ' · a warband is out' : ''}${c.hunted ? ' · being hunted by a guard' : ''}`; }
     if (T.b) {
       const b = G.byId(T.b); if (!b) return '';
       const B = b.wk ? { ...BUILD.wonder, name: upper(WONDERS[b.wk].name) } : BUILD[b.type], f = b.owner;
