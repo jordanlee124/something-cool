@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace EmberVale.View
 {
-    /// <summary>Starts a watch-only game: runs the sim and keeps the camera framed on the action.</summary>
+    /// <summary>Starts a watch-only game: runs the sim and keeps the camera framed on the action (or lets the player steer it).</summary>
     [RequireComponent(typeof(ModelSet))]
     public sealed class GameBootstrap : MonoBehaviour
     {
@@ -34,18 +34,23 @@ namespace EmberVale.View
             Frame();
         }
 
-        Vector3 camCentre;
-        float camDist;
-        bool camReady;
+        readonly CameraRig rig = new CameraRig();
 
         /// <summary>
-        /// Portrait phone: look down at an angle. While settlers are walking or villages exist, frame the action
-        /// (bands, then villages) with some margin and glide there; with nothing to follow, show the whole map.
+        /// Portrait phone: look down at an angle. While settlers are walking or villages exist, the follow camera frames
+        /// them (bands, then villages) with some margin; with nothing to follow it shows the whole map. The CameraRig
+        /// glides there, and lets the player pan and zoom by hand (see CameraRig).
         /// </summary>
         void Frame()
         {
             if (cam == null) return;
             var w = game.World;
+            float fov = cam.fieldOfView * Mathf.Deg2Rad;
+            float tanHalf = Mathf.Tan(fov / 2);
+            float Fit(float x0, float x1, float z0, float z1) =>
+                Mathf.Max((z1 - z0) * 0.75f / tanHalf, (x1 - x0) * 0.75f / (tanHalf * cam.aspect));
+
+            float fullDist = Fit(w.X0, w.X1, w.Y0, w.Y1);
             float minX = w.X0, maxX = w.X1, minZ = w.Y0, maxZ = w.Y1;
             if (followAction)
             {
@@ -64,17 +69,7 @@ namespace EmberVale.View
                 }
             }
             var centre = new Vector3((minX + maxX) / 2 + 0.5f, 0, (minZ + maxZ) / 2 + 0.5f);
-            float fov = cam.fieldOfView * Mathf.Deg2Rad;
-            float needH = (maxZ - minZ) * 0.75f / Mathf.Tan(fov / 2);
-            float needW = (maxX - minX) * 0.75f / (Mathf.Tan(fov / 2) * cam.aspect);
-            float dist = Mathf.Max(needH, needW);
-            if (!camReady) { camCentre = centre; camDist = dist; camReady = true; }
-            float k = 1 - Mathf.Exp(-Time.deltaTime * 1.5f);   // glide, so the view never jumps when a band founds its village
-            camCentre = Vector3.Lerp(camCentre, centre, k);
-            camDist = Mathf.Lerp(camDist, dist, k);
-            var rot = Quaternion.Euler(70, 0, 0);
-            cam.transform.rotation = rot;
-            cam.transform.position = camCentre - rot * Vector3.forward * camDist;
+            rig.Update(cam, w, centre, Fit(minX, maxX, minZ, maxZ), fullDist);
         }
     }
 }
