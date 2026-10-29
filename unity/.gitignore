@@ -1,0 +1,40 @@
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+MemoryCaptures/
+Recordings/
+
+# IDE / project files Unity regenerates
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.pidb
+*.booproj
+
+# Xcode output from iOS builds
+*.xcworkspace
+*.xcodeproj/xcuserdata/
+
+# Crash / symbol dumps
+sysinfo.txt
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# dotnet check tool output
+Tools~/**/bin/
+Tools~/**/obj/
+
+# keep the SimCheck project file despite *.csproj above
+!Tools~/SimCheck/SimCheck.csproj

@@ -54,3 +54,7 @@ The game is still one file, organised into classes: `World` (chunked tiles, terr
 ### Run it
 
 Open `ember-vale.html` in any browser. To play it on an iPhone, serve it from anywhere, for example GitHub Pages: Settings → Pages → deploy from the `main` branch. Then open the page in Safari and choose Share → Add to Home Screen.
+
+## Unity port (work in progress)
+
+`unity/` holds a Unity project for an iPhone build of Ember Vale, with Blender-generated low-poly models. See [unity/README.md](unity/README.md) and [unity/PORT_PLAN.md](unity/PORT_PLAN.md). The HTML game remains the design reference.
