@@ -17,8 +17,16 @@ namespace EmberVale.View
         GameObject groundQuad;
         readonly Dictionary<Band, BandView> bandViews = new Dictionary<Band, BandView>();
         readonly List<GameObject> settlementObjects = new List<GameObject>();
+        readonly Dictionary<long, GameObject> trees = new Dictionary<long, GameObject>();
+        readonly Dictionary<int, BuildingView> buildingViews = new Dictionary<int, BuildingView>();
+        readonly Dictionary<Colonist, ColonistView> colonistViews = new Dictionary<Colonist, ColonistView>();
+        readonly Dictionary<int, Transform> villageRoots = new Dictionary<int, Transform>();
+        Material fieldMat, siteMat;
+        bool groundDirty;
         static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
 
+        sealed class BuildingView { public Building b; public GameObject go; public bool done; }
+        sealed class ColonistView { public Transform t; public float phase; public Vector3 last; }
         sealed class BandView { public GameObject root, tent, banner; public List<Transform> walkers = new List<Transform>(); }
 
         public void Init(Game g, ModelSet m)
@@ -27,10 +35,33 @@ namespace EmberVale.View
             BuildGround();
             ScatterNature();
             foreach (var b in game.Bands) AddBand(b);
+            fieldMat = FlatMaterial(new Color(0.55f, 0.42f, 0.22f));
+            siteMat = FlatMaterial(new Color(0.40f, 0.33f, 0.22f));
             game.SettlementFounded += OnFounded;
+            game.BuildingPlaced += OnPlaced;
+            game.BuildingFinished += OnFinished;
+            game.TileChanged += OnTileChanged;
+            game.ColonistBorn += OnBorn;
+            game.ColonistDied += OnDied;
         }
 
-        void OnDestroy() { if (game != null) game.SettlementFounded -= OnFounded; }
+        void OnDestroy()
+        {
+            if (game == null) return;
+            game.SettlementFounded -= OnFounded;
+            game.BuildingPlaced -= OnPlaced;
+            game.BuildingFinished -= OnFinished;
+            game.TileChanged -= OnTileChanged;
+            game.ColonistBorn -= OnBorn;
+            game.ColonistDied -= OnDied;
+        }
+
+        static Material FlatMaterial(Color c)
+        {
+            var m = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            m.SetColor(BaseColor, c);
+            return m;
+        }
 
         public Vector3 WorldCentre()
         {
@@ -88,7 +119,19 @@ namespace EmberVale.View
                     if (prefab == null) continue;
                     var o = Instantiate(prefab, new Vector3(x + 0.5f, 0, y + 0.5f), Quaternion.Euler(0, (float)t.H * 360f, 0), parent);
                     o.transform.localScale *= 0.85f + (float)((t.H * 7) % 1) * 0.4f;
+                    if (t.T == Ground.Forest) trees[Key(x, y)] = o;
                 }
+        }
+
+        static long Key(int x, int y) { return ((long)x << 32) ^ (uint)y; }
+
+        /// <summary>A tree was felled or a site cleared: the tile turns to meadow and its model goes.</summary>
+        void OnTileChanged(int x, int y)
+        {
+            var w = game.World;
+            groundTex.SetPixel(x - w.X0, y - w.Y0, GroundColour(w.At(x, y)));
+            groundDirty = true;
+            if (trees.TryGetValue(Key(x, y), out var tree)) { Destroy(tree); trees.Remove(Key(x, y)); }
         }
 
         // ---------- settler bands ----------
@@ -136,18 +179,77 @@ namespace EmberVale.View
 
             var root = new GameObject("Village " + s.Name);
             root.transform.SetParent(transform, false);
-            foreach (var b in s.Buildings)
-            {
-                var prefab = b.Type == "tc" ? models.hall : models.hut;   // farm uses the hut until it has its own model
-                var o = Instantiate(prefab, new Vector3(b.X + 0.5f, 0, b.Y + 0.5f), Quaternion.identity, root.transform);
-                if (b.Type == "tc") PlantFlag(o, s.Color, root.transform);
-            }
-            for (int i = 0; i < s.People.Count; i++)
-            {
-                var p = s.People[i];
-                Instantiate(models.settler, new Vector3((float)p.X + 0.5f + (i - 2) * 0.25f, 0, (float)p.Y - 0.7f), Quaternion.identity, root.transform);
-            }
+            villageRoots[s.Id] = root.transform;
             settlementObjects.Add(root);
+            foreach (var b in s.Buildings) AddBuildingView(s, b);
+            foreach (var p in s.People) AddColonist(s, p);
+        }
+
+        void OnPlaced(Settlement s, Building b) { AddBuildingView(s, b); }
+
+        void OnFinished(Settlement s, Building b)
+        {
+            if (buildingViews.TryGetValue(b.Id, out var v)) { Destroy(v.go); buildingViews.Remove(b.Id); }
+            AddBuildingView(s, b);
+        }
+
+        void AddBuildingView(Settlement s, Building b)
+        {
+            if (!villageRoots.TryGetValue(s.Id, out var root)) return;
+            var pos = new Vector3(b.X + 0.5f, 0, b.Y + 0.5f);
+            GameObject o;
+            if (b.Type == "farm")
+            {
+                o = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Destroy(o.GetComponent<Collider>());
+                o.transform.SetParent(root, false);
+                o.transform.position = pos + new Vector3(0, 0.03f, 0);
+                o.transform.localScale = new Vector3(0.92f, 0.06f, 0.92f);
+                o.GetComponent<Renderer>().sharedMaterial = b.Built ? fieldMat : siteMat;
+            }
+            else
+            {
+                o = Instantiate(b.Type == "tc" ? models.hall : models.hut, pos, Quaternion.identity, root);   // house, hut: same model for now
+                if (b.Type == "tc") PlantFlag(o, s.Color, root);
+                if (!b.Built) o.transform.localScale = Vector3.one * 0.3f;
+            }
+            buildingViews[b.Id] = new BuildingView { b = b, go = o, done = b.Built };
+        }
+
+        void AddColonist(Settlement s, Colonist c)
+        {
+            if (!villageRoots.TryGetValue(s.Id, out var root)) return;
+            var o = Instantiate(models.settler, new Vector3((float)c.X + 0.5f, 0, (float)c.Y + 0.5f), Quaternion.identity, root);
+            colonistViews[c] = new ColonistView { t = o.transform, phase = c.Id * 1.7f, last = o.transform.position };
+        }
+
+        void OnBorn(Settlement s, Colonist c) { AddColonist(s, c); }
+
+        void OnDied(Settlement s, Colonist c)
+        {
+            if (colonistViews.TryGetValue(c, out var v)) { Destroy(v.t.gameObject); colonistViews.Remove(c); }
+        }
+
+        /// <summary>Villagers glide to where the sim has them and face the way they walk; sites grow as builders work.</summary>
+        void UpdateVillages()
+        {
+            foreach (var kv in colonistViews)
+            {
+                var c = kv.Key; var v = kv.Value;
+                bool walking = c.Path.Count > 0;
+                float bob = walking ? Mathf.Abs(Mathf.Sin(Time.time * 9 + v.phase)) * 0.05f : (c.State == Act.Work ? Mathf.Abs(Mathf.Sin(Time.time * 5 + v.phase)) * 0.04f : 0f);
+                var target = new Vector3((float)c.X + 0.5f, bob, (float)c.Y + 0.5f);
+                var flat = new Vector3(target.x - v.last.x, 0, target.z - v.last.z);
+                if (flat.sqrMagnitude > 1e-6f) v.t.rotation = Quaternion.Slerp(v.t.rotation, Quaternion.LookRotation(flat), 0.25f);
+                v.last = new Vector3(target.x, 0, target.z);
+                v.t.position = target;
+            }
+            foreach (var kv in buildingViews)
+            {
+                var v = kv.Value;
+                if (v.b.Built || v.b.Type == "farm") continue;
+                v.go.transform.localScale = Vector3.one * Mathf.Lerp(0.3f, 1f, (float)(v.b.Prog / Game.BuildTime(v.b.Type)));
+            }
         }
 
         /// <summary>
@@ -178,6 +280,11 @@ namespace EmberVale.View
             foreach (var r in o.GetComponentsInChildren<Renderer>()) r.SetPropertyBlock(block);
         }
 
-        void LateUpdate() { UpdateBands(); }
+        void LateUpdate()
+        {
+            UpdateBands();
+            UpdateVillages();
+            if (groundDirty) { groundTex.Apply(); groundDirty = false; }
+        }
     }
 }
