@@ -178,7 +178,7 @@ def make_hall():
          box("turret", (0.28, 0.28, 0.5), (0.5, 0.1, 1.0), "stone"),
          pyramid("turret_roof", 0.26, 0.28, (0.5, 0.1, 1.25), "roof_slate")]
     hall = join("hall", p)
-    mount(hall, "flag_mount", (-0.5, 0, 1.22))   # west end of the roof ridge; the turret is at the east end
+    mount(hall, "flag_mount", (0.5, 0.1, 1.53))   # the apex of the slate turret roof (1.25 + 0.28)
     return hall
 
 

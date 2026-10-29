@@ -151,7 +151,7 @@ namespace EmberVale.View
         }
 
         /// <summary>
-        /// Flies the faction banner from the hall's roof. The hall model carries an empty child called flag_mount at the roof
+        /// Flies the faction banner from the top of the hall's turret. The hall model carries an empty child called flag_mount at the roof
         /// ridge (made in blender/generate_assets.py), so the spot follows the model whatever the import axes are.
         /// </summary>
         void PlantFlag(GameObject hall, string colour, Transform parent)
