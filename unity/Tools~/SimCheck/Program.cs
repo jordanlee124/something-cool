@@ -132,6 +132,19 @@ static class Program
         Check(born > 0, tag + "children were born (" + born + ")");
         Check(!badStock, tag + "stores stay between 0 and the cap");
         Check(!offMap, tag + "nobody walked off the map");
+        int miners = 0, stuck = 0;
+        foreach (var s in g.Settlements)
+        {
+            foreach (var c in s.People)
+            {
+                if (c.Job == "miner") miners++;
+                // stuck: working or walking to a tile that is no longer the right ground, or standing still with a stale idle timer
+                if (c.State == Act.GoWork && c.Path.Count == 0) stuck++;
+            }
+        }
+        Check(stuck == 0, tag + "nobody is stuck walking to an unreachable target");
+        Console.WriteLine("       stone stores: " + string.Join(", ", g.Settlements.ConvertAll(s => (int)s.Stone)) + ", miners " + miners);
+        Check(g.Settlements.TrueForAll(s => s.Stone > 10), tag + "miners raised the stone store above the starting 10");
     }
 
     static string Fingerprint(int seed, int bands, int days = 0)
