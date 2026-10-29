@@ -34,6 +34,8 @@ namespace EmberVale.Sim
         public readonly List<Colonist> People = new List<Colonist>();
         public double Food = 40, Wood = 30, Stone = 10;   // the starting stores of Settlement.found
         public double AiTimer;   // the steward thinks every 1.5 s
+        public int Age;          // 0 Settlement, 1 Village, 2 Town (the later ages come with their own slices)
+        public int LowDays;      // days spent below the age's size or without its landmark
         public int Pop => People.Count;
     }
 
