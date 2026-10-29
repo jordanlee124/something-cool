@@ -5,7 +5,7 @@ Run headless with the bpy wheel or Blender itself:
     blender -b -P generate_assets.py -- --out ... --renders ...
 
 Scale: 1 Blender unit = 1 map tile = 1 Unity unit. Models sit on z=0 (Unity y=0),
-centred on the origin. Every material is a flat colour from PALETTE, so the whole
+centred on the origin. Every material is a flat colour from PALETTE (sRGB display colours, converted to linear on the way out), so the whole
 set shares the same look and Unity can swap them for one shared atlas later.
 """
 import argparse
@@ -38,14 +38,25 @@ PALETTE = {
 _mats = {}
 
 
+def srgb_to_linear(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def linear(rgb):
+    """PALETTE values are the colours you see (sRGB). Blender materials and the FBX hold linear values;
+    Unity's importer turns those back into display colours. Without this the whole set comes out washed out
+    (red roofs turn salmon pink)."""
+    return tuple(srgb_to_linear(c) for c in rgb)
+
+
 def mat(name):
     if name not in _mats:
         m = bpy.data.materials.new("EV_" + name)
         m.use_nodes = True
         bsdf = m.node_tree.nodes["Principled BSDF"]
-        bsdf.inputs["Base Color"].default_value = (*PALETTE[name], 1)
+        bsdf.inputs["Base Color"].default_value = (*linear(PALETTE[name]), 1)
         bsdf.inputs["Roughness"].default_value = 1.0
-        m.diffuse_color = (*PALETTE[name], 1)
+        m.diffuse_color = (*linear(PALETTE[name]), 1)
         _mats[name] = m
     return _mats[name]
 
@@ -250,7 +261,7 @@ def setup_render(res):
     sc.world = w
     w.use_nodes = True
     bg = w.node_tree.nodes["Background"]
-    bg.inputs["Color"].default_value = (0.50, 0.66, 0.42, 1)
+    bg.inputs["Color"].default_value = (*linear((0.50, 0.66, 0.42)), 1)
     bg.inputs["Strength"].default_value = 0.35
     sun_d = bpy.data.lights.new("sun", "SUN")
     sun_d.energy = 3.2
