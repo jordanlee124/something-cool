@@ -1151,12 +1151,12 @@ class Steward {
     want.grower = placesAt(b => !!LUX_OF[b.type] && f.res[LUX_OF[b.type]] < f.want(LUX_OF[b.type]) * 3);
     // soldiers train at the barracks: a soldier is a person taken from the work, at a training cost in gold, and paid upkeep each season
     const barracksSlots = f.buildings.filter(b => b.built && b.onHome && b.type === 'barracks' && !(b.shut > G.day)).reduce((n, b) => n + BUILD.barracks.slots, 0);
-    want.soldier = barracksSlots ? Math.min(barracksSlots, Math.ceil(pop * (f.enemies.length ? 0.14 : 0.03))) : 0;
+    want.soldier = barracksSlots ? Math.min(barracksSlots, f.standingWanted()) : 0;
     let rest = pop; for (const k in JOBS) if (k !== 'woodcutter') rest -= want[k];
     // short of hands: the luxuries, tools, planks and goods wait first, then the bread, the miners and the builders
-    // in peace the soldiers are the first to be stood down; at war they are the last to go
+    // the soldiers are the last to be stood down, in peace too: a standing army stays in service until the town is really short
     const cutOrder = ['grower', 'smith', 'sawyer', 'artisan', 'miller', 'baker', 'miner', 'builder'];
-    for (const k of f.enemies.length ? [...cutOrder, 'soldier'] : ['soldier', ...cutOrder]) {
+    for (const k of [...cutOrder, 'soldier']) {
       if (rest >= 0) break;
       const cut = Math.min(Math.max(0, want[k] - (k === 'builder' && work ? 1 : 0)), -rest); want[k] -= cut; rest += cut;
     }
@@ -1408,6 +1408,9 @@ class Steward {
         if (tryBuild('tower', why)) return;
       }
     }
+    // a standing army needs places to drill: a barracks once the garrison outgrows the places there are
+    const drillPlaces = f.buildings.filter(b => b.type === 'barracks' && b.built).length * BUILD.barracks.slots;
+    if (f.age >= 2 && f.standingWanted() > drillPlaces && f.anyCount('barracks') < 1 + Math.floor(pop / 60) && !sites.some(b => b.type === 'barracks') && tryBuild('barracks', 'Raising a barracks so the standing army has places to drill.')) return;
     if (f.anyCount('dock') < 1 + Math.floor(pop / 25) && tryBuild('dock', 'Building a dock so there is fish in winter.')) return;
     // self-sufficiency: a quarry for stone that never runs out, a forester to keep the woods growing
     if (f.age >= 1 && f.res.stone < c * 0.5 && f.anyCount('quarry') < 1 + Math.floor(pop / 45) && !sites.some(b => b.type === 'quarry')) {
@@ -2075,6 +2078,8 @@ class Settlement {
   get soldiersPay() { return Math.ceil((this.soldiers + this.marching) * SOLDIER_PAY + this.bdef * 0.1); }
   // soldiers at home, and soldiers on the march (who are still paid but no longer live in the town's households)
   get soldiers() { let n = 0; for (const c of this.people) if (c.job === 'soldier') n++; return n; }
+  // how many soldiers the town keeps in service: a standing garrison in peace, a larger levy at war
+  standingWanted() { return Math.ceil(this.pop * (this.enemies.length ? 0.14 : 0.06)); }
   get marching() { let n = 0; for (const r of G.armies) if (r.f === this.id) n += r.members.length; return n; }
   get bdef() { return Army.bdef(this); }
   get drops() {
@@ -4865,7 +4870,7 @@ class Interface {
     const fams = new Map(); for (const b of f.buildings) if (b.lord) { const s = G.byId(b.lord); if (s && s.fam) fams.set(s.fam, (fams.get(s.fam) || 0) + 1); }
     const top = [...fams.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
     const marching = f.marching, mine = G.armies.filter(r => r.f === f.id).map(r => { const t = G.F(r.to), tn = t ? t.name : 'an enemy'; return r.st === 'march' ? `marching on ${tn}` : r.st === 'battle' ? `fighting at ${tn}` : r.st === 'siege' ? `besieging ${tn}` : 'coming home'; });
-    const army = `<b>Soldiers:</b> ${f.soldiers} at the barracks${marching ? `, ${marching} on the march` : ''}, costing ${f.soldiersPay} gold a season${mine.length ? `. <b>Army:</b> ${mine.join('; ')}` : ''}. `;
+    const army = `<b>${f.enemies.length ? 'Soldiers' : 'Standing army'}:</b> ${f.soldiers} at the barracks${marching ? `, ${marching} on the march` : ''}, costing ${f.soldiersPay} gold a season${mine.length ? `. <b>Army:</b> ${mine.join('; ')}` : ''}. `;
     const life = army + `<b>Harvest:</b> ${se === 2 || se === 3 ? (hv < 1 ? 'failed this year' : hv > 1 ? 'a bumper year' : 'an ordinary year') : se === 0 ? 'fields sown, granary running down' : 'the crop is growing'}; granary ${Math.floor(f.res.food)} of ${f.cap}${f.famine > G.day ? '; <b>famine</b>' : ''}. `
       + (f.strike > G.day ? `<b>Strike:</b> ${f.strikeN} workers out over ${f.strikeWhy}. ` : f.payK > 1.01 ? `Strikes have won wages ${Math.round((f.payK - 1) * 100)}% higher. ` : '')
       + (f.fair && f.fair.until > G.day ? `<b>Fair:</b> merchants from ${f.fair.guests.map(id => (G.F(id) || {}).name).filter(Boolean).join(', ')} for ${f.fair.until - G.day} more day${f.fair.until - G.day > 1 ? 's' : ''}. ` : '')
