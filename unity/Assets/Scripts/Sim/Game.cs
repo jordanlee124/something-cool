@@ -40,16 +40,16 @@ namespace EmberVale.Sim
                     for (int x = p.X - 4; x <= p.X + 4; x++)
                     {
                         var t = World.At(x, y); double d = Math.Sqrt((x - p.X) * (x - p.X) + (y - p.Y) * (y - p.Y));
-                        if (t != null && (d < 3.2 || (t.Water && d < 4.5))) { t.T = Terrain.Meadow; t.Amt = 0; }
+                        if (t != null && (d < 3.2 || (t.Water && d < 4.5))) { t.T = Ground.Meadow; t.Amt = 0; }
                     }
-                foreach (var spec in new[] { (Terrain.Forest, 30, 7), (Terrain.Rock, 60, 4) })
+                foreach (var spec in new[] { (Ground.Forest, 30, 7), (Ground.Rock, 60, 4) })
                 {
                     int put = 0, guard = 0;
                     while (put < spec.Item3 && guard++ < 400)
                     {
                         int x = p.X + Rng.Int(-6, 6), y = p.Y + Rng.Int(-6, 6);
                         var t = World.At(x, y);
-                        if (t != null && t.T == Terrain.Meadow && Dist(x, y, p.X, p.Y) > 3.4) { t.T = spec.Item1; t.Amt = spec.Item2; put++; }
+                        if (t != null && t.T == Ground.Meadow && Dist(x, y, p.X, p.Y) > 3.4) { t.T = spec.Item1; t.Amt = spec.Item2; put++; }
                     }
                 }
             }
@@ -116,7 +116,7 @@ namespace EmberVale.Sim
         public (double score, Site site)? ScoreSite(int x, int y, double d, List<Band> others)
         {
             var W = World; var T = W.At(x, y);
-            if (T == null || T.T != Terrain.Meadow || T.Building != 0 || x < W.X0 + 4 || y < W.Y0 + 4 || x >= W.X1 - 4 || y >= W.Y1 - 4) return null;
+            if (T == null || T.T != Ground.Meadow || T.Building != 0 || x < W.X0 + 4 || y < W.Y0 + 4 || x >= W.X1 - 4 || y >= W.Y1 - 4) return null;
             foreach (var o in others) if (o.HasSite && Dist(o.Site.X, o.Site.Y, x, y) < 11) return null;
             double open = 0; int forest = 0, rock = 0, water = 0;
             for (int yy = y - 6; yy <= y + 6; yy++)
@@ -124,10 +124,10 @@ namespace EmberVale.Sim
                 {
                     var U = W.At(xx, yy); if (U == null) continue;
                     bool near = Math.Abs(xx - x) <= 2 && Math.Abs(yy - y) <= 2;
-                    if (U.T == Terrain.Meadow) { if (near) open++; }
-                    else if (U.T == Terrain.Forest) { forest++; if (near) open += 0.6; }
-                    else if (U.T == Terrain.Rock) rock++;
-                    else if (U.T == Terrain.Water && Math.Abs(xx - x) <= 5 && Math.Abs(yy - y) <= 5) water++;
+                    if (U.T == Ground.Meadow) { if (near) open++; }
+                    else if (U.T == Ground.Forest) { forest++; if (near) open += 0.6; }
+                    else if (U.T == Ground.Rock) rock++;
+                    else if (U.T == Ground.Water && Math.Abs(xx - x) <= 5 && Math.Abs(yy - y) <= 5) water++;
                 }
             if (open < 15) return null;
             double sc = open * 0.6 + Math.Min(forest, 10) * 0.7 + (rock > 0 ? 4 + Math.Min(rock, 3) : -10) + (forest < 2 ? -8 : 0)
@@ -200,15 +200,15 @@ namespace EmberVale.Sim
                 for (int xx = x - 2; xx <= x + 2; xx++)
                 {
                     var T = World.At(xx, yy);
-                    if (T != null && (T.T == Terrain.Forest || T.T == Terrain.Rock) && Dist(xx, yy, x, y) < 1.7) { T.T = Terrain.Meadow; T.Amt = 0; }
+                    if (T != null && (T.T == Ground.Forest || T.T == Ground.Rock) && Dist(xx, yy, x, y) < 1.7) { T.T = Ground.Meadow; T.Amt = 0; }
                 }
             Bands.Remove(b);
             var s = new Settlement { Id = nextId++, Name = b.Name, Color = b.Color, CentreX = x, CentreY = y };
             Settlements.Add(s);
-            var hall = World.At(x, y); hall.T = Terrain.Meadow; hall.Amt = 0;
+            var hall = World.At(x, y); hall.T = Ground.Meadow; hall.Amt = 0;
             AddBuilding(s, "tc", x, y, true);
             var fieldTile = World.At(x - 2, y + 1);
-            if (fieldTile != null && fieldTile.Building == 0 && !fieldTile.Water) { fieldTile.T = Terrain.Meadow; fieldTile.Amt = 0; AddBuilding(s, "farm", x - 2, y + 1, true); }
+            if (fieldTile != null && fieldTile.Building == 0 && !fieldTile.Water) { fieldTile.T = Ground.Meadow; fieldTile.Amt = 0; AddBuilding(s, "farm", x - 2, y + 1, true); }
             foreach (var job in new[] { "farmer", "farmer", "woodcutter", "woodcutter", "builder" })
                 s.People.Add(new Colonist { Id = nextId++, Settlement = s.Id, Job = job, X = x, Y = y });
             string why = b.Site.Water > 0 ? "beside the water" : b.Site.Rock >= 3 ? "under the rocks" : b.Site.Forest >= 8 ? "at the edge of the forest" : "on open ground";

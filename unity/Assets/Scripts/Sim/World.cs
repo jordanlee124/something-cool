@@ -5,12 +5,12 @@ namespace EmberVale.Sim
 {
     public sealed class Tile
     {
-        public Terrain T;
+        public Ground T;
         public int Amt;          // what is left of the forest / rock
         public double H;         // per-tile random, used for visual variety
         public int Building;     // id of the building standing here, 0 if none
         public int Owner;        // settlement id owning this tile, 0 if none
-        public bool Water => T == Terrain.Water;
+        public bool Water => T == Ground.Water;
     }
 
     /// <summary>
@@ -34,10 +34,10 @@ namespace EmberVale.Sim
         {
             int sd = Seed;
             double h = Noise.Hash2(x, y, sd + 9);
-            if (Noise.Noise2(x, y, 7, sd + 11) + (Noise.Hash2(x, y, sd + 5) - 0.5) * 0.06 > 0.82) return new Tile { T = Terrain.Water, H = h };
-            if (Noise.Noise2(x, y, 4.5, sd + 1) + Noise.Hash2(x, y, sd + 2) * 0.14 > 0.64) return new Tile { T = Terrain.Forest, Amt = 30, H = h };
-            if (Noise.Noise2(x, y, 4.8, sd + 3) + Noise.Hash2(x, y, sd + 4) * 0.12 > 0.72) return new Tile { T = Terrain.Rock, Amt = 60, H = h };
-            return new Tile { T = Terrain.Meadow, H = h };
+            if (Noise.Noise2(x, y, 7, sd + 11) + (Noise.Hash2(x, y, sd + 5) - 0.5) * 0.06 > 0.82) return new Tile { T = Ground.Water, H = h };
+            if (Noise.Noise2(x, y, 4.5, sd + 1) + Noise.Hash2(x, y, sd + 2) * 0.14 > 0.64) return new Tile { T = Ground.Forest, Amt = 30, H = h };
+            if (Noise.Noise2(x, y, 4.8, sd + 3) + Noise.Hash2(x, y, sd + 4) * 0.12 > 0.72) return new Tile { T = Ground.Rock, Amt = 60, H = h };
+            return new Tile { T = Ground.Meadow, H = h };
         }
 
         /// <summary>Cover chunk range [cx0..cx1] x [cy0..cy1], keeping tiles that already exist.</summary>

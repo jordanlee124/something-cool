@@ -68,7 +68,7 @@ static class Program
         foreach (var s in g.Settlements)
         {
             var t = g.World.At(s.CentreX, s.CentreY);
-            good &= t.T == Terrain.Meadow && s.Buildings.Exists(b => b.Type == "tc") && s.People.Count == 5;
+            good &= t.T == Ground.Meadow && s.Buildings.Exists(b => b.Type == "tc") && s.People.Count == 5;
         }
         Check(good, "each village has a hall on meadow and five settlers");
         double minD = 1e9;

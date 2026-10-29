@@ -45,9 +45,9 @@ namespace EmberVale.View
             float v = (float)t.H * 0.12f - 0.06f;
             switch (t.T)
             {
-                case Terrain.Water: return new Color(0.24f + v, 0.45f + v, 0.70f + v);
-                case Terrain.Forest: return new Color(0.28f + v, 0.52f + v, 0.27f + v);
-                case Terrain.Rock: return new Color(0.50f + v, 0.50f + v, 0.48f + v);
+                case Ground.Water: return new Color(0.24f + v, 0.45f + v, 0.70f + v);
+                case Ground.Forest: return new Color(0.28f + v, 0.52f + v, 0.27f + v);
+                case Ground.Rock: return new Color(0.50f + v, 0.50f + v, 0.48f + v);
                 default: return new Color(0.50f + v, 0.69f + v, 0.38f + v);
             }
         }
@@ -83,8 +83,8 @@ namespace EmberVale.View
                 {
                     var t = w.At(x, y);
                     GameObject prefab = null;
-                    if (t.T == Terrain.Forest) prefab = t.H > 0.55 ? models.oak : models.tree;
-                    else if (t.T == Terrain.Rock) prefab = models.rock;
+                    if (t.T == Ground.Forest) prefab = t.H > 0.55 ? models.oak : models.tree;
+                    else if (t.T == Ground.Rock) prefab = models.rock;
                     if (prefab == null) continue;
                     var o = Instantiate(prefab, new Vector3(x + 0.5f, 0, y + 0.5f), Quaternion.Euler(0, (float)t.H * 360f, 0), parent);
                     o.transform.localScale *= 0.85f + (float)((t.H * 7) % 1) * 0.4f;

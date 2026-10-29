@@ -24,6 +24,6 @@ namespace EmberVale.Sim
         };
     }
 
-    /// <summary>Terrain kinds, numbered as in the JS (Tile.t).</summary>
-    public enum Terrain : byte { Meadow = 0, Forest = 1, Rock = 2, Water = 3 }
+    /// <summary>Ground kinds (not named Terrain: that clashes with UnityEngine.Terrain), numbered as in the JS (Tile.t).</summary>
+    public enum Ground : byte { Meadow = 0, Forest = 1, Rock = 2, Water = 3 }
 }
