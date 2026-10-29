@@ -53,7 +53,9 @@ namespace EmberVale.EditorTools
             var asset = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(path);
             if (asset == null)
             {
-                asset = UniversalRenderPipelineAsset.Create();
+                var data = ScriptableObject.CreateInstance<UniversalRendererData>();
+                AssetDatabase.CreateAsset(data, RenderDir + "/EmberVale_Renderer.asset");
+                asset = UniversalRenderPipelineAsset.Create(data);
                 AssetDatabase.CreateAsset(asset, path);
             }
             if (asset == null)
