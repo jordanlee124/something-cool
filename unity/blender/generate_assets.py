@@ -127,6 +127,16 @@ def ico(name, r, loc, material, squash=1.0):
     return finish(o, material)
 
 
+def mount(owner, name, loc):
+    """An empty child that marks a spot on a model (for example where the faction flag stands).
+    It exports to FBX as a child transform, so Unity can find it by name whatever the axis conversion."""
+    e = bpy.data.objects.new(name, None)
+    bpy.context.collection.objects.link(e)
+    e.parent = owner
+    e.location = loc
+    return e
+
+
 def join(name, parts):
     bpy.ops.object.select_all(action="DESELECT")
     for p in parts:
@@ -167,7 +177,9 @@ def make_hall():
          box("door", (0.26, 0.03, 0.36), (0, -0.46, 0.3), "wood_dark"),
          box("turret", (0.28, 0.28, 0.5), (0.5, 0.1, 1.0), "stone"),
          pyramid("turret_roof", 0.26, 0.28, (0.5, 0.1, 1.25), "roof_slate")]
-    return join("hall", p)
+    hall = join("hall", p)
+    mount(hall, "flag_mount", (-0.5, 0, 1.22))   # west end of the roof ridge; the turret is at the east end
+    return hall
 
 
 def make_barracks():
@@ -291,10 +303,12 @@ def render_to(path):
 def export_fbx(obj, path):
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
+    for child in obj.children_recursive:
+        child.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.export_scene.fbx(
         filepath=path, use_selection=True, apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
-        axis_forward="-Z", axis_up="Y", bake_space_transform=True, object_types={"MESH"},
+        axis_forward="-Z", axis_up="Y", bake_space_transform=True, object_types={"MESH", "EMPTY"},
         mesh_smooth_type="FACE", add_leaf_bones=False, path_mode="COPY", embed_textures=False)
 
 

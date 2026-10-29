@@ -140,7 +140,7 @@ namespace EmberVale.View
             {
                 var prefab = b.Type == "tc" ? models.hall : models.hut;   // farm uses the hut until it has its own model
                 var o = Instantiate(prefab, new Vector3(b.X + 0.5f, 0, b.Y + 0.5f), Quaternion.identity, root.transform);
-                if (b.Type == "tc") Tint(Instantiate(models.banner, o.transform.position + new Vector3(0.9f, 0, -0.5f), Quaternion.identity, root.transform), s.Color);
+                if (b.Type == "tc") PlantFlag(o, s.Color, root.transform);
             }
             for (int i = 0; i < s.People.Count; i++)
             {
@@ -148,6 +148,26 @@ namespace EmberVale.View
                 Instantiate(models.settler, new Vector3((float)p.X + 0.5f + (i - 2) * 0.25f, 0, (float)p.Y - 0.7f), Quaternion.identity, root.transform);
             }
             settlementObjects.Add(root);
+        }
+
+        /// <summary>
+        /// Flies the faction banner from the hall's roof. The hall model carries an empty child called flag_mount at the roof
+        /// ridge (made in blender/generate_assets.py), so the spot follows the model whatever the import axes are.
+        /// </summary>
+        void PlantFlag(GameObject hall, string colour, Transform parent)
+        {
+            var mount = FindDeep(hall.transform, "flag_mount");
+            var pos = mount != null ? mount.position : hall.transform.position + new Vector3(0.9f, 0, -0.5f);   // old model without a mount: beside the hall
+            var flag = Instantiate(models.banner, pos, Quaternion.identity, parent);
+            if (mount != null) flag.transform.localScale *= 0.6f;   // the pole is 1 tile tall: on a roof it should be a pennant
+            Tint(flag, colour);
+        }
+
+        static Transform FindDeep(Transform t, string name)
+        {
+            if (t.name == name) return t;
+            for (int i = 0; i < t.childCount; i++) { var r = FindDeep(t.GetChild(i), name); if (r != null) return r; }
+            return null;
         }
 
         static void Tint(GameObject o, string hex)
