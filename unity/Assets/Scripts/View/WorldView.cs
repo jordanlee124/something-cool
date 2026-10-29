@@ -140,7 +140,7 @@ namespace EmberVale.View
             {
                 var prefab = b.Type == "tc" ? models.hall : models.hut;   // farm uses the hut until it has its own model
                 var o = Instantiate(prefab, new Vector3(b.X + 0.5f, 0, b.Y + 0.5f), Quaternion.identity, root.transform);
-                if (b.Type == "tc") Tint(Instantiate(models.banner, o.transform.position + new Vector3(0.9f, 0, -0.5f), Quaternion.identity, root.transform), s.Color);
+                if (b.Type == "tc") Tint(Instantiate(models.banner, o.transform.position + new Vector3(-0.4f, 0.95f, 0f), Quaternion.identity, root.transform), s.Color);
             }
             for (int i = 0; i < s.People.Count; i++)
             {
