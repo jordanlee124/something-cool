@@ -84,7 +84,7 @@ namespace EmberVale.View
                     var t = w.At(x, y);
                     GameObject prefab = null;
                     if (t.T == Ground.Forest) prefab = t.H > 0.55 ? models.oak : models.tree;
-                    else if (t.T == Ground.Rock) prefab = models.rock;
+                    else if (t.T == Ground.Rock && (t.H * 13) % 1 < 0.4) prefab = models.rock;   // rock patches are thinned: a model on every rock tile buries the map
                     if (prefab == null) continue;
                     var o = Instantiate(prefab, new Vector3(x + 0.5f, 0, y + 0.5f), Quaternion.Euler(0, (float)t.H * 360f, 0), parent);
                     o.transform.localScale *= 0.85f + (float)((t.H * 7) % 1) * 0.4f;
