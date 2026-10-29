@@ -8,7 +8,7 @@ namespace EmberVale.Sim
     /// pick a site, walk there and found a village (hall, farm, first five settlers). Everything is driven by
     /// Step(dt) with dt in game seconds, exactly like the JS frame loop, and by one seeded Rng.
     /// </summary>
-    public sealed class Game
+    public sealed partial class Game
     {
         public readonly World World;
         public readonly Rng Rng;
@@ -21,6 +21,7 @@ namespace EmberVale.Sim
         public event Action<Settlement> SettlementFounded;
 
         int nextId = 1;
+        public int NextId() { return nextId++; }
 
         public Game(int seed, int startBands)
         {
@@ -162,6 +163,7 @@ namespace EmberVale.Sim
         {
             Time += dt;
             foreach (var b in Bands.ToArray()) StepBand(b, dt);
+            StepVillages(dt);
         }
 
         void StepBand(Band b, double dt)
@@ -210,7 +212,7 @@ namespace EmberVale.Sim
             var fieldTile = World.At(x - 2, y + 1);
             if (fieldTile != null && fieldTile.Building == 0 && !fieldTile.Water) { fieldTile.T = Ground.Meadow; fieldTile.Amt = 0; AddBuilding(s, "farm", x - 2, y + 1, true); }
             foreach (var job in new[] { "farmer", "farmer", "woodcutter", "woodcutter", "builder" })
-                s.People.Add(new Colonist { Id = nextId++, Settlement = s.Id, Job = job, X = x, Y = y });
+                s.People.Add(new Colonist { Id = nextId++, Settlement = s.Id, Job = job, X = x, Y = y, Wait = 0.5 });
             string why = b.Site.Water > 0 ? "beside the water" : b.Site.Rock >= 3 ? "under the rocks" : b.Site.Forest >= 8 ? "at the edge of the forest" : "on open ground";
             Note("The settlers of " + s.Name + " raised their first hall " + why + ".", LogKind.Good);
             SettlementFounded?.Invoke(s);
@@ -220,6 +222,7 @@ namespace EmberVale.Sim
         {
             var b = new Building { Id = nextId++, Settlement = s.Id, Type = type, X = x, Y = y, Built = built };
             s.Buildings.Add(b); World.At(x, y).Building = b.Id;
+            if (!built) BuildingPlaced?.Invoke(s, b);
             return b;
         }
 

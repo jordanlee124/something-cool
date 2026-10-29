@@ -22,9 +22,14 @@ static class Program
         Console.WriteLine("Settlers found villages");
         foreach (int bands in new[] { 1, 3 }) Founding(2026, bands);
 
+        Console.WriteLine("Village life");
+        VillageLife(2026, 1);
+        VillageLife(31, 3);
+
         Console.WriteLine("Determinism");
         Check(Fingerprint(555, 3) == Fingerprint(555, 3), "same seed gives the same history");
         Check(Fingerprint(555, 3) != Fingerprint(556, 3), "different seed gives a different history");
+        Check(Fingerprint(555, 3, 40) == Fingerprint(555, 3, 40), "villages repeat the same years");
 
         Console.WriteLine(failures == 0 ? "ALL CHECKS PASSED" : failures + " CHECK(S) FAILED");
         return failures == 0 ? 0 : 1;
@@ -77,10 +82,55 @@ static class Program
         if (g.Settlements.Count > 1) Check(minD >= 6, "villages are apart (closest " + minD.ToString("0.0") + " tiles)");
     }
 
-    static string Fingerprint(int seed, int bands)
+    // run the village for some years and check it does what the HTML village does: grow, fell trees, build, eat
+    static void VillageLife(int seed, int bands)
+    {
+        var g = new Game(seed, bands);
+        int placed = 0, finished = 0, felled = 0, born = 0, died = 0;
+        g.BuildingPlaced += (s, b) => placed++;
+        g.BuildingFinished += (s, b) => finished++;
+        g.TileChanged += (x, y) => felled++;
+        g.ColonistBorn += (s, c) => born++;
+        g.ColonistDied += (s, c) => died++;
+        double maxFood = 0; bool badStock = false, offMap = false;
+        int steps = 0;
+        while (g.Day <= K.YEAR * 4 + 1)
+        {
+            g.Step(0.5); steps++;
+            if (steps % 20 != 0) continue;
+            foreach (var s in g.Settlements)
+            {
+                maxFood = Math.Max(maxFood, s.Food);
+                badStock |= s.Food < 0 || s.Wood < 0 || s.Food > K.CAP || s.Wood > K.CAP;
+                foreach (var c in s.People) offMap |= !g.World.Inside((int)Math.Round(c.X), (int)Math.Round(c.Y));
+            }
+        }
+        string tag = "seed " + seed + " (" + bands + " band(s)), 4 years: ";
+        Check(g.Settlements.Count == bands, tag + "villages founded");
+        Check(placed > 0 && finished > 0, tag + "huts and fields were placed (" + placed + ") and finished (" + finished + ")");
+        Check(felled > 0, tag + "trees were felled (" + felled + " tiles cleared)");
+        bool built = true, fed = true; int total = 0;
+        foreach (var s in g.Settlements)
+        {
+            int huts = s.Buildings.FindAll(b => b.Type == "hut" && b.Built).Count;
+            built &= huts >= 1;
+            total += s.Pop;
+            fed &= s.Pop >= 1;
+            Console.WriteLine("       " + s.Name + ": pop " + s.Pop + ", huts " + huts + ", farms " + s.Buildings.FindAll(b => b.Type == "farm" && b.Built).Count + ", food " + (int)s.Food + ", wood " + (int)s.Wood + ", born " + born + ", died " + died);
+        }
+        Check(built, tag + "every village raised a hut");
+        Check(fed, tag + "no village died out");
+        Check(born > 0, tag + "children were born (" + born + ")");
+        Check(!badStock, tag + "stores stay between 0 and the cap");
+        Check(!offMap, tag + "nobody walked off the map");
+    }
+
+    static string Fingerprint(int seed, int bands, int days = 0)
     {
         var g = new Game(seed, bands);
         for (int i = 0; i < 20000 && g.Bands.Count > 0; i++) g.Step(0.5);
+        if (days > 0) while (g.Day <= days) g.Step(0.5);
+        if (days > 0) { var q = new List<string>(); foreach (var s in g.Settlements) q.Add(s.Pop + "/" + (int)s.Food + "/" + (int)s.Wood + "/" + s.Buildings.Count); return string.Join(";", q); }
         var parts = new List<string>();
         foreach (var s in g.Settlements) parts.Add(s.Name + "@" + s.CentreX + "," + s.CentreY);
         return string.Join(";", parts) + "|" + g.Day;

@@ -38,7 +38,7 @@ The honest problem: every feature added to the HTML after this point is a featur
 | Terrain generation | `World.generate` | done, identical on 4 seeds |
 | Settler bands found villages | `Band`, `Game.setup` | done (sim); view drawn but untested in editor |
 | Pathfinding (A*) | `World.searchBox` | basic version, no roads or borders yet |
-| Colonists and jobs | `Colonist`, `Steward` | not started |
+| Colonists and jobs | `Colonist`, `Steward` | Settlement age only: farmers, woodcutters, builders, huts and fields, food, winter fuel, births (`Village.cs`). No stone, miners, roads, storehouses or mood yet |
 | Buildings and growth through the ages | `Settlement`, `BUILD`, `AGES` | not started |
 | Roads | `ROAD_*`, steward road planning | not started |
 | Economy, prices, trade | `Settlement`, `Trade` | not started |

@@ -8,6 +8,9 @@ namespace EmberVale.Sim
         public const int SEASON_DAYS = 8;
         public const int YEAR = 32;          // days
         public const double BAND_SPEED = 0.8; // tiles per game second
+        public const double SPEED = 2.1;     // colonists, tiles per game second
+        public const int CAP = 100;          // what a village can store before it builds storehouses
+        public const int POPCAP0 = 25;       // POPCAP[0]: most people a Settlement-age village holds
 
         public static readonly string[] Colors =
         {
