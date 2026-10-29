@@ -1,0 +1,14 @@
+{
+  "name": "EmberVale.View",
+  "rootNamespace": "EmberVale.View",
+  "references": [ "EmberVale.Sim" ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

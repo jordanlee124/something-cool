@@ -1,0 +1,14 @@
+{
+  "name": "EmberVale.Editor",
+  "rootNamespace": "EmberVale.EditorTools",
+  "references": [ "EmberVale.Sim", "EmberVale.View", "Unity.RenderPipelines.Universal.Runtime" ],
+  "includePlatforms": [ "Editor" ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
