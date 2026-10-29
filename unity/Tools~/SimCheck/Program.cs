@@ -23,8 +23,8 @@ static class Program
         foreach (int bands in new[] { 1, 3 }) Founding(2026, bands);
 
         Console.WriteLine("Village life");
-        VillageLife(2026, 1);
-        VillageLife(31, 3);
+        VillageLife(2026, 1, 12);
+        VillageLife(31, 3, 12);
 
         Console.WriteLine("Determinism");
         Check(Fingerprint(555, 3) == Fingerprint(555, 3), "same seed gives the same history");
@@ -83,7 +83,7 @@ static class Program
     }
 
     // run the village for some years and check it does what the HTML village does: grow, fell trees, build, eat
-    static void VillageLife(int seed, int bands)
+    static void VillageLife(int seed, int bands, int years)
     {
         var g = new Game(seed, bands);
         int placed = 0, finished = 0, felled = 0, born = 0, died = 0;
@@ -94,18 +94,18 @@ static class Program
         g.ColonistDied += (s, c) => died++;
         double maxFood = 0; bool badStock = false, offMap = false;
         int steps = 0;
-        while (g.Day <= K.YEAR * 4 + 1)
+        while (g.Day <= K.YEAR * years + 1)
         {
             g.Step(0.5); steps++;
             if (steps % 20 != 0) continue;
             foreach (var s in g.Settlements)
             {
                 maxFood = Math.Max(maxFood, s.Food);
-                badStock |= s.Food < 0 || s.Wood < 0 || s.Food > K.CAP || s.Wood > K.CAP;
+                badStock |= s.Food < 0 || s.Wood < 0 || s.Food > g.Cap(s) || s.Wood > g.Cap(s) || s.Stone < 0 || s.Stone > g.Cap(s);
                 foreach (var c in s.People) offMap |= !g.World.Inside((int)Math.Round(c.X), (int)Math.Round(c.Y));
             }
         }
-        string tag = "seed " + seed + " (" + bands + " band(s)), 4 years: ";
+        string tag = "seed " + seed + " (" + bands + " band(s)), " + years + " years: ";
         Check(g.Settlements.Count == bands, tag + "villages founded");
         Check(placed > 0 && finished > 0, tag + "huts and fields were placed (" + placed + ") and finished (" + finished + ")");
         Check(felled > 0, tag + "trees were felled (" + felled + " tiles cleared)");
@@ -116,9 +116,18 @@ static class Program
             built &= huts >= 1;
             total += s.Pop;
             fed &= s.Pop >= 1;
-            Console.WriteLine("       " + s.Name + ": pop " + s.Pop + ", huts " + huts + ", farms " + s.Buildings.FindAll(b => b.Type == "farm" && b.Built).Count + ", food " + (int)s.Food + ", wood " + (int)s.Wood + ", born " + born + ", died " + died);
+            Console.WriteLine("       " + s.Name + ": " + K.AgeNames[s.Age] + ", pop " + s.Pop + ", stone " + (int)s.Stone + ", stores " + s.Buildings.FindAll(b => b.Type == "store" && b.Built).Count + ", quarries " + s.Buildings.FindAll(b => b.Type == "quarry" && b.Built).Count + ", chapels " + s.Buildings.FindAll(b => b.Type == "chapel" && b.Built).Count + ", markets " + s.Buildings.FindAll(b => b.Type == "market" && b.Built).Count + ", huts " + huts + ", farms " + s.Buildings.FindAll(b => b.Type == "farm" && b.Built).Count + ", food " + (int)s.Food + ", wood " + (int)s.Wood);
         }
         Check(built, tag + "every village raised a hut");
+        bool aged = true, stocked = true;
+        foreach (var s in g.Settlements)
+        {
+            aged &= s.Age >= 1;
+            stocked &= s.Buildings.Exists(b => b.Type == "store" && b.Built) && s.Buildings.Exists(b => b.Type == "chapel" && b.Built);
+        }
+        Check(aged, tag + "every village rose to at least a village (chapel built, 12 people)");
+        Check(stocked, tag + "every village has a storehouse and a chapel");
+        Console.WriteLine("       " + born + " born, " + died + " died across " + g.Settlements.Count + " village(s)");
         Check(fed, tag + "no village died out");
         Check(born > 0, tag + "children were born (" + born + ")");
         Check(!badStock, tag + "stores stay between 0 and the cap");

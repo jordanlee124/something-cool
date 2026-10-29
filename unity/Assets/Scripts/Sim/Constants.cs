@@ -10,7 +10,13 @@ namespace EmberVale.Sim
         public const double BAND_SPEED = 0.8; // tiles per game second
         public const double SPEED = 2.1;     // colonists, tiles per game second
         public const int CAP = 100;          // what a village can store before it builds storehouses
-        public const int POPCAP0 = 25;       // POPCAP[0]: most people a Settlement-age village holds
+
+        public static readonly int[] PopCap = { 25, 50, 100, 170, 260, 320 };
+        public static readonly int[] Radius = { 5, 6, 8, 9, 11, 13 };
+        public static readonly string[] AgeNames = { "Settlement", "Village", "Town", "City", "Kingdom", "Empire" };
+        public static readonly int[] AgePop = { 0, 12, 30, 60, 110, 180 };   // people needed to reach each age
+        public static readonly string[] AgeMark = { null, "chapel", "market", "cathedral", "castle", "palace" };   // landmark each age needs
+        public const int MaxAge = 2;         // ported so far: Settlement, Village, Town
 
         public static readonly string[] Colors =
         {

@@ -21,7 +21,7 @@ namespace EmberVale.View
         readonly Dictionary<int, BuildingView> buildingViews = new Dictionary<int, BuildingView>();
         readonly Dictionary<Colonist, ColonistView> colonistViews = new Dictionary<Colonist, ColonistView>();
         readonly Dictionary<int, Transform> villageRoots = new Dictionary<int, Transform>();
-        Material fieldMat, siteMat;
+        Material fieldMat, siteMat, pitMat;
         bool groundDirty;
         static readonly int BaseColor = Shader.PropertyToID("_BaseColor");
 
@@ -37,6 +37,7 @@ namespace EmberVale.View
             foreach (var b in game.Bands) AddBand(b);
             fieldMat = FlatMaterial(new Color(0.55f, 0.42f, 0.22f));
             siteMat = FlatMaterial(new Color(0.40f, 0.33f, 0.22f));
+            pitMat = FlatMaterial(new Color(0.46f, 0.46f, 0.45f));
             game.SettlementFounded += OnFounded;
             game.BuildingPlaced += OnPlaced;
             game.BuildingFinished += OnFinished;
@@ -198,20 +199,30 @@ namespace EmberVale.View
             if (!villageRoots.TryGetValue(s.Id, out var root)) return;
             var pos = new Vector3(b.X + 0.5f, 0, b.Y + 0.5f);
             GameObject o;
-            if (b.Type == "farm")
+            if (b.Type == "farm" || b.Type == "quarry")
             {
+                // no models for fields and pits yet: a flat plot, brown for a field and grey for a quarry
                 o = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 Destroy(o.GetComponent<Collider>());
                 o.transform.SetParent(root, false);
                 o.transform.position = pos + new Vector3(0, 0.03f, 0);
                 o.transform.localScale = new Vector3(0.92f, 0.06f, 0.92f);
-                o.GetComponent<Renderer>().sharedMaterial = b.Built ? fieldMat : siteMat;
+                o.GetComponent<Renderer>().sharedMaterial = !b.Built ? siteMat : b.Type == "farm" ? fieldMat : pitMat;
             }
             else
             {
-                o = Instantiate(b.Type == "tc" ? models.hall : models.hut, pos, Quaternion.identity, root);   // house, hut: same model for now
+                // store, chapel and market borrow the hut and house models until they get their own: the store is a big hut,
+                // the market a big house with an orange pennant, the chapel a house with a white one
+                GameObject prefab = b.Type == "tc" ? models.hall : b.Type == "hut" || b.Type == "store" ? models.hut : models.house;
+                o = Instantiate(prefab, pos, Quaternion.identity, root);
+                float scale = b.Type == "store" ? 1.25f : b.Type == "market" ? 1.3f : 1f;
                 if (b.Type == "tc") PlantFlag(o, s.Color, root);
-                if (!b.Built) o.transform.localScale = Vector3.one * 0.3f;
+                else if ((b.Type == "chapel" || b.Type == "market") && b.Built)
+                {
+                    var pennant = Instantiate(models.banner, pos + new Vector3(0.35f, 0, 0.35f), Quaternion.identity, o.transform);
+                    Tint(pennant, b.Type == "chapel" ? "#f2efe6" : "#e8892b");
+                }
+                o.transform.localScale = Vector3.one * (b.Built ? scale : 0.3f);
             }
             buildingViews[b.Id] = new BuildingView { b = b, go = o, done = b.Built };
         }
@@ -247,7 +258,7 @@ namespace EmberVale.View
             foreach (var kv in buildingViews)
             {
                 var v = kv.Value;
-                if (v.b.Built || v.b.Type == "farm") continue;
+                if (v.b.Built || v.b.Type == "farm" || v.b.Type == "quarry") continue;
                 v.go.transform.localScale = Vector3.one * Mathf.Lerp(0.3f, 1f, (float)(v.b.Prog / Game.BuildTime(v.b.Type)));
             }
         }

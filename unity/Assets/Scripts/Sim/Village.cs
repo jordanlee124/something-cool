@@ -12,13 +12,24 @@ namespace EmberVale.Sim
     {
         public event Action<Settlement, Building> BuildingPlaced, BuildingFinished;
         public event Action<Settlement, Colonist> ColonistBorn, ColonistDied;
-        public event Action<int, int> TileChanged;   // a tree was felled or a site was cleared
+        public event Action<int, int> TileChanged;   // a tree was felled, a rock quarried away or a site was cleared
+        public event Action<Settlement> AgeChanged;
 
-        // name, wood cost, build time (s), people housed, work places  (BUILD in the JS)
-        static readonly Dictionary<string, (int wood, double time, int house, int slots)> Kinds = new Dictionary<string, (int, double, int, int)>
+        // wood and stone cost, build time (s), people housed, work places  (BUILD in the JS)
+        static readonly Dictionary<string, (int wood, int stone, double time, int house, int slots)> Kinds = new Dictionary<string, (int, int, double, int, int)>
         {
-            { "tc", (0, 1, 5, 0) }, { "hut", (12, 8, 3, 0) }, { "farm", (8, 6, 0, 2) },
+            { "tc", (0, 0, 1, 5, 0) }, { "hut", (12, 0, 8, 3, 0) }, { "farm", (8, 0, 6, 0, 2) },
+            { "quarry", (20, 0, 10, 0, 3) }, { "store", (15, 6, 10, 0, 0) },
+            { "chapel", (30, 15, 16, 0, 0) }, { "market", (40, 30, 18, 0, 0) },
         };
+
+        public double Cap(Settlement s) { return K.CAP + 60 * BuiltCount(s, "store") + 30 * s.Age; }
+        int BuiltCount(Settlement s, string type) { int n = 0; foreach (var b in s.Buildings) if (b.Type == type && b.Built) n++; return n; }
+        int AnyCount(Settlement s, string type) { int n = 0; foreach (var b in s.Buildings) if (b.Type == type) n++; return n; }
+        // what the village wants on hand (Settlement.want, without upkeep yet)
+        double WantFood(Settlement s) { return s.Pop * 4 + 20; }
+        double WantWood(Settlement s) { return Math.Ceiling(s.Pop / 4.0) * K.SEASON_DAYS + 30 + s.Age * 10; }
+        double WantStone(Settlement s) { return 30 + s.Age * 30; }
 
         int lastDay = 1;
 
@@ -51,35 +62,48 @@ namespace EmberVale.Sim
         public int Housing(Settlement s) { int n = 0; foreach (var b in s.Buildings) if (b.Built) n += Kinds[b.Type].house; return n; }
         int FutureHousing(Settlement s) { int n = 0; foreach (var b in s.Buildings) n += Kinds[b.Type].house; return n; }
 
-        /// <summary>Keeps the right number of hands on food, building and wood (Steward.assignJobs, Settlement age).</summary>
+        static readonly string[] Jobs = { "farmer", "builder", "miner", "woodcutter" };
+
+        /// <summary>Keeps the right number of hands on food, building, stone and wood (Steward.assignJobs).</summary>
         void AssignJobs(Settlement s)
         {
             int pop = s.Pop, se = Season;
             if (pop == 0) return;
             int slots = Slots(s, "farm"), sites = Sites(s);
-            double cap = K.CAP;
+            double cap = Cap(s);
             double share = se == 3 ? 0.42 : se == 2 ? 0.5 : 0.36;
             if (s.Food < pop * 3) share += 0.1;
             // after the harvest the granary should carry the town through winter and spring
-            double stock = pop * 12;
+            double stock = se == 1 || se == 2 ? Math.Max(WantFood(s) * 2, pop * 12) : WantFood(s) * 2;
             if (s.Food > Math.Min(cap * 0.9, stock)) share = Math.Min(share, se == 3 ? 0.3 : 0.18);
             var want = new Dictionary<string, int>();
             want["farmer"] = Math.Min(slots, Math.Max(1, (int)Math.Ceiling(pop * share)));
             want["builder"] = sites > 0 ? Math.Min((int)Math.Ceiling(sites * 1.6), Math.Max(1, (int)Math.Ceiling(pop * 0.18))) : 0;
-            int rest = pop - want["farmer"] - want["builder"];
+            // workers go where the town is short, measured against what it wants on hand rather than how much it can store
+            bool stoneHungry = s.Stone < Math.Min(cap * 0.85, WantStone(s) * 2);
+            want["miner"] = stoneHungry ? Math.Max(1, (int)Math.Ceiling(pop * 0.15)) : 0;
+            int rest = pop - want["farmer"] - want["builder"] - want["miner"];
+            // short of hands: the miners wait first, then the builders
+            foreach (var k in new[] { "miner", "builder" })
+            {
+                if (rest >= 0) break;
+                int cut = Math.Min(Math.Max(0, want[k] - (k == "builder" && sites > 0 ? 1 : 0)), -rest);
+                want[k] -= cut; rest += cut;
+            }
             want["woodcutter"] = Math.Max(0, rest);
-            // more wood than the village can hold is no use: spare hands tend the fields instead
-            if (s.Wood >= cap * 0.95 && want["woodcutter"] > 1)
+            // more wood than the town wants is only worth what a caravan pays: spare hands help elsewhere
+            if (s.Wood >= Math.Min(cap * 0.95, WantWood(s) * 2) && want["woodcutter"] > 1)
             {
                 int m = (int)Math.Floor(want["woodcutter"] * 0.7);
                 want["woodcutter"] -= m;
-                int room = Math.Max(0, slots - want["farmer"]);
-                int toFarm = Math.Min(m, room);
-                want["farmer"] += toFarm; want["builder"] += m - toFarm;
+                if (stoneHungry) want["miner"] += m;
+                else if (s.Food < Math.Min(cap * 0.9, stock)) { int f = Math.Min(m, Math.Max(0, slots - want["farmer"])); want["farmer"] += f; want["builder"] += m - f; }
+                else want["builder"] += m;
             }
-            var have = new Dictionary<string, int> { { "farmer", 0 }, { "builder", 0 }, { "woodcutter", 0 } };
+            var have = new Dictionary<string, int>();
+            foreach (var k in Jobs) have[k] = 0;
             foreach (var c in s.People) have[c.Job]++;
-            foreach (var k in new[] { "farmer", "builder", "woodcutter" })
+            foreach (var k in Jobs)
             {
                 while (have[k] > want[k])
                 {
@@ -88,7 +112,7 @@ namespace EmberVale.Sim
                     if (o == null) foreach (var c in s.People) if (c.Job == k && c.Carry == null) { o = c; break; }
                     if (o == null) foreach (var c in s.People) if (c.Job == k) { o = c; break; }
                     string to = null;
-                    foreach (var j in new[] { "farmer", "builder", "woodcutter" }) if (have[j] < want[j]) { to = j; break; }
+                    foreach (var j in Jobs) if (have[j] < want[j]) { to = j; break; }
                     if (o == null || to == null) break;
                     o.Job = to; have[k]--; have[to]++;
                     if (o.Carry == null) { o.State = Act.Idle; o.Path.Clear(); o.Wait = 0; o.TargetBuilding = 0; }
@@ -96,24 +120,46 @@ namespace EmberVale.Sim
             }
         }
 
-        /// <summary>Starts a new home or field when the village needs one (Steward.build, Settlement age).</summary>
+        /// <summary>Starts what the village needs next: fields, homes, the landmark for the next age, a storehouse, a quarry (Steward.build).</summary>
         void Build(Settlement s)
         {
-            int pop = s.Pop;
-            if (Sites(s) >= 1 + pop / 10) return;
-            if (Slots(s, "farm") < (int)Math.Ceiling(pop * 0.42) + 1 && StartSite(s, "farm")) return;
-            if (pop >= FutureHousing(s) - 1 && pop < K.POPCAP0 + 5) StartSite(s, "hut");
+            int pop = s.Pop, se = Season;
+            double cap = Cap(s);
+            var sites = s.Buildings.FindAll(b => !b.Built);
+            if (sites.Count >= 1 + pop / 10) return;
+            int slots = Slots(s, "farm");
+            string markType = null; bool lost = false;
+            if (s.Age > 0 && AnyCount(s, K.AgeMark[s.Age]) == 0) { markType = K.AgeMark[s.Age]; lost = true; }
+            else if (s.Age < K.MaxAge) markType = K.AgeMark[s.Age + 1];
+            bool markNeeded = markType != null && (lost || pop >= K.AgePop[s.Age + 1] * 0.7) && AnyCount(s, markType) == 0;
+            var reserve = markNeeded ? Kinds[markType] : default;
+            Func<string, bool, bool> tryBuild = (type, urgent) =>
+            {
+                var k = Kinds[type];
+                if (s.Wood < k.wood || s.Stone < k.stone) return false;
+                if (!urgent && markNeeded && (s.Wood - k.wood < reserve.wood * 0.6 || s.Stone - k.stone < reserve.stone * 0.6)) return false;
+                return StartSite(s, type);
+            };
+            if (slots < (int)Math.Ceiling(pop * 0.42) + 1 && tryBuild("farm", true)) return;
+            if (pop >= FutureHousing(s) - 1 && pop < K.PopCap[s.Age] + 5 && tryBuild("hut", s.Age < 2)) return;
+            if (markNeeded && tryBuild(markType, true)) return;
+            bool full = s.Food >= cap * 0.85 || s.Wood >= cap * 0.85 || s.Stone >= cap * 0.85;
+            bool winterStock = (se == 2 || se == 1) && (cap < pop * 6 || s.Food > cap * 0.85);
+            bool needCap = markType != null && (Kinds[markType].stone > cap * 0.9 || Kinds[markType].wood > cap * 0.9);
+            if ((full || winterStock || needCap) && AnyCount(s, "store") < 1 + pop / 14 && !sites.Exists(b => b.Type == "store") && tryBuild("store", false)) return;
+            // self-sufficiency: a quarry for stone that never runs out
+            if (s.Age >= 1 && s.Stone < cap * 0.5 && AnyCount(s, "quarry") < 1 + pop / 45 && !sites.Exists(b => b.Type == "quarry")) tryBuild("quarry", false);
         }
 
         bool StartSite(Settlement s, string type)
         {
-            int cost = Kinds[type].wood;
-            if (s.Wood < cost) return false;
+            var k = Kinds[type];
+            if (s.Wood < k.wood || s.Stone < k.stone) return false;
             var spot = PlaceSpot(s, type);
             if (!spot.HasValue) return false;
             var T = World.At(spot.Value.X, spot.Value.Y);
-            if (T.T == Ground.Forest) { s.Wood = Math.Min(K.CAP, s.Wood + T.Amt); T.T = Ground.Meadow; T.Amt = 0; TileChanged?.Invoke(spot.Value.X, spot.Value.Y); }
-            s.Wood -= cost;
+            if (T.T == Ground.Forest) { s.Wood = Math.Min(Cap(s), s.Wood + T.Amt); T.T = Ground.Meadow; T.Amt = 0; TileChanged?.Invoke(spot.Value.X, spot.Value.Y); }
+            s.Wood -= k.wood; s.Stone -= k.stone;
             AddBuilding(s, type, spot.Value.X, spot.Value.Y, false);
             return true;
         }
@@ -142,14 +188,19 @@ namespace EmberVale.Sim
 
         Pt? PlaceSpot(Settlement s, string type)
         {
-            int reach = 5 + 4;   // RADIUS[age] + 4
+            int reach = K.Radius[s.Age] + 4;
             Pt? best = null; double bs = 1e9;
             var homes = IsType(s, "tc", "hut"); var farms = IsType(s, "farm");
+            bool anyPit = AnyCount(s, "quarry") > 0;
+            Func<Tile, bool> rockOrTree = T => T.T == Ground.Forest || T.T == Ground.Rock;
+            Func<Tile, bool> rock = T => T.T == Ground.Rock;
             for (int y = s.CentreY - reach; y <= s.CentreY + reach; y++)
                 for (int x = s.CentreX - reach; x <= s.CentreX + reach; x++)
                 {
                     var T = World.At(x, y);
                     if (T == null || T.Building != 0 || (T.T != Ground.Meadow && T.T != Ground.Forest)) continue;
+                    // the first pit goes beside real rock
+                    if (type == "quarry" && !anyPit && Near(x, y, 2, rock) < 2) continue;
                     // a building needs a neighbour it can be reached from
                     bool access = false;
                     foreach (var d in new[] { new Pt(1, 0), new Pt(-1, 0), new Pt(0, 1), new Pt(0, -1) })
@@ -159,7 +210,14 @@ namespace EmberVale.Sim
                     if (dist < 1.5) continue;
                     double sc = T.T == Ground.Forest ? 1.8 : 0;
                     if (type == "hut") sc += dist * 1.3 - Near(x, y, 1, homes) * 0.9 + Near(x, y, 1, farms) * 1.5 + j * 0.6;
-                    else sc += Math.Abs(dist - (3 + Math.Sqrt(s.Buildings.Count) * 0.75)) * 0.8 - Near(x, y, 1, farms) * 1.3 + Near(x, y, 1, homes) * 1.2 + j * 0.8;
+                    else if (type == "farm") sc += Math.Abs(dist - (3 + Math.Sqrt(s.Buildings.Count) * 0.75)) * 0.8 - Near(x, y, 1, farms) * 1.3 + Near(x, y, 1, homes) * 1.2 + j * 0.8;
+                    else if (type == "store")
+                    {
+                        var dr = Drop(s, x, y); double dd = dr != null ? Math.Abs(dr.X - x) + Math.Abs(dr.Y - y) : 10;
+                        sc += -Math.Min(dd, 9) * 1.1 - Near(x, y, 3, rockOrTree) * 0.35 - Near(x, y, 2, farms) * 0.4 + dist * 0.35 + j;
+                    }
+                    else if (type == "quarry") sc += -Near(x, y, 2, rock) * 0.8 + dist * 0.25 + j;
+                    else sc += Math.Abs(dist - 2.5) * 1.1 - Near(x, y, 1, homes) * 0.3 + j * 0.8;   // a landmark near the square
                     if (sc < bs) { bs = sc; best = new Pt(x, y); }
                 }
             return best;
@@ -171,7 +229,7 @@ namespace EmberVale.Sim
         {
             Building best = null; double bd = 1e9;
             foreach (var b in s.Buildings)
-                if (b.Built && b.Type == "tc") { double d = Math.Abs(b.X - x) + Math.Abs(b.Y - y); if (d < bd) { bd = d; best = b; } }
+                if (b.Built && (b.Type == "tc" || b.Type == "store")) { double d = Math.Abs(b.X - x) + Math.Abs(b.Y - y); if (d < bd) { bd = d; best = b; } }
             return best;
         }
 
@@ -200,7 +258,27 @@ namespace EmberVale.Sim
                 if (best == null) return false;
                 tid = best.Id; tx = best.X; ty = best.Y; return true;
             }
-            // woodcutter: nearest tree not already taken, preferring trees near the hall
+            if (c.Job == "miner")
+            {
+                // a quarry never runs dry, so miners fill its pits before they go looking for loose rock
+                Building q = null; double qd = 1e9;
+                foreach (var b in s.Buildings)
+                {
+                    if (!(b.Built && b.Type == "quarry")) continue;
+                    if (b.Id != c.TargetBuilding && ClaimsOn(s, c, o => o.Job == "miner" && o.TargetBuilding == b.Id) >= Kinds["quarry"].slots) continue;
+                    double d = Dist(c.X, c.Y, b.X, b.Y) - (b.Id == c.TargetBuilding ? 100 : 0);
+                    if (d < qd) { qd = d; q = b; }
+                }
+                if (q != null) { tid = q.Id; tx = q.X; ty = q.Y; return true; }
+                return ScanTiles(s, c, Ground.Rock, out tx, out ty);
+            }
+            return ScanTiles(s, c, Ground.Forest, out tx, out ty);
+        }
+
+        /// <summary>The nearest tile of trees or rock not already taken, preferring ground near a drop-off.</summary>
+        bool ScanTiles(Settlement s, Colonist c, Ground want, out int tx, out int ty)
+        {
+            tx = 0; ty = 0;
             var drop = Drop(s, c.X, c.Y);
             foreach (int r in new[] { 10, 26 })
             {
@@ -209,8 +287,8 @@ namespace EmberVale.Sim
                     for (int x = Math.Max(World.X0, cx - r); x <= Math.Min(World.X1 - 1, cx + r); x++)
                     {
                         var T = World.At(x, y);
-                        if (T.T != Ground.Forest || T.Amt <= 0 || T.Building != 0) continue;
-                        int taken = ClaimsOn(s, c, o => o.Job == "woodcutter" && o.TargetBuilding == 0 && o.TX == x && o.TY == y && o.State != Act.Idle);
+                        if (T.T != want || T.Amt <= 0 || T.Building != 0) continue;
+                        int taken = ClaimsOn(s, c, o => o.Job == c.Job && o.TargetBuilding == 0 && o.TX == x && o.TY == y && o.State != Act.Idle);
                         if (taken >= 2) continue;
                         double d = Dist(c.X, c.Y, x, y) * 0.5 + taken * 3;
                         if (d >= bestD) continue;
@@ -259,8 +337,10 @@ namespace EmberVale.Sim
             if (c.State == Act.GoWork) { c.State = Act.Work; c.Work = 0; }
             else if (c.State == Act.GoStore)
             {
-                if (c.Carry == "food") s.Food = Math.Min(K.CAP, s.Food + c.CarryN);
-                else if (c.Carry == "wood") s.Wood = Math.Min(K.CAP, s.Wood + c.CarryN);
+                double cap = Cap(s);
+                if (c.Carry == "food") s.Food = Math.Min(cap, s.Food + c.CarryN);
+                else if (c.Carry == "wood") s.Wood = Math.Min(cap, s.Wood + c.CarryN);
+                else if (c.Carry == "stone") s.Stone = Math.Min(cap, s.Stone + c.CarryN);
                 c.Carry = null; c.CarryN = 0; c.State = Act.Idle; c.Wait = 0.2;
             }
             else { c.State = Act.Idle; c.Wait = 1 + Rng.Next() * 2; }
@@ -298,6 +378,29 @@ namespace EmberVale.Sim
                     c.Carry = "wood"; c.CarryN = n; GoStore(s, c);
                 }
             }
+            else if (c.Job == "miner")
+            {
+                if (c.TargetBuilding != 0)
+                {
+                    var q = Find(s, c.TargetBuilding);
+                    if (q == null || !q.Built || q.Type != "quarry") { Quit(c); return; }
+                    c.Work += dt;
+                    if (c.Work >= 7) { c.Carry = "stone"; c.CarryN = 2; GoStore(s, c); }   // a pit never runs dry
+                }
+                else
+                {
+                    var T = World.At(c.TX, c.TY);
+                    if (T == null || T.T != Ground.Rock || T.Amt <= 0) { Quit(c); return; }
+                    c.Work += dt;
+                    if (c.Work >= 6)
+                    {
+                        int n = Math.Min(2, T.Amt);
+                        T.Amt -= n;
+                        if (T.Amt <= 0) { T.T = Ground.Meadow; T.Amt = 0; TileChanged?.Invoke(c.TX, c.TY); }
+                        c.Carry = "stone"; c.CarryN = n; GoStore(s, c);
+                    }
+                }
+            }
             else
             {
                 var b = Find(s, c.TargetBuilding);
@@ -307,6 +410,7 @@ namespace EmberVale.Sim
                 {
                     b.Built = true;
                     BuildingFinished?.Invoke(s, b);
+                    if (b.Type == "chapel" || b.Type == "market") Note(s.Name + " finished its " + b.Type + ".", LogKind.Good);
                     Quit(c);
                 }
             }
@@ -357,11 +461,43 @@ namespace EmberVale.Sim
                 }
             }
             int pop = s.Pop, spare = Housing(s) - pop;
-            if (pop >= 2 && pop < K.POPCAP0 && spare > 0 && s.Food >= pop * 1.5 && se != 3)
+            double moodK = 62.0 / 60;   // mood is not ported yet: the HTML starts every village at 62
+            bool room = pop < K.PopCap[s.Age];
+            if (room && pop >= 2 && spare > 0 && s.Food >= pop * 1.5 && se != 3)
             {
-                double moodK = 62.0 / 60;   // mood is not ported yet: the HTML starts every village at 62
-                int n = Math.Min(spare, (int)Math.Floor(pop * 0.012 * moodK + Rng.Next()));
+                double rate = 0.012 + 0.006 * BuiltCount(s, "chapel");
+                int n = Math.Min(spare, (int)Math.Floor(pop * rate * moodK + Rng.Next()));
                 for (int i = 0; i < n; i++) Spawn(s);
+            }
+            int spare2 = Housing(s) - s.Pop;
+            if (room && s.Age >= 1 && spare2 >= 2 && s.Food >= s.Pop * 2 && se != 3 && Rng.Next() < (0.1 + 0.03 * s.Age) * moodK)
+            {
+                int n = Math.Min(spare2, Rng.Int(1, 1 + s.Age / 2));
+                for (int i = 0; i < n; i++) Spawn(s);
+            }
+            CheckAge(s);
+        }
+
+        /// <summary>A village rises an age with enough people and its landmark, and falls back after 16 days without them (Settlement.checkAge).</summary>
+        void CheckAge(Settlement s)
+        {
+            if (s.Age > 0 && (s.Pop < K.AgePop[s.Age] * 0.6 || AnyCount(s, K.AgeMark[s.Age]) == 0))
+            {
+                if (++s.LowDays >= 16)
+                {
+                    s.LowDays = 0; s.Age--;
+                    Note(s.Name + " has declined to " + K.AgeNames[s.Age].ToLower() + ".", LogKind.Info);
+                    AgeChanged?.Invoke(s);
+                }
+                return;
+            }
+            s.LowDays = 0;
+            if (s.Age >= K.MaxAge) return;
+            if (s.Pop >= K.AgePop[s.Age + 1] && BuiltCount(s, K.AgeMark[s.Age + 1]) > 0)
+            {
+                s.Age++;
+                Note(s.Name + " is now " + (K.AgeNames[s.Age][0] == 'A' ? "an " : "a ") + K.AgeNames[s.Age].ToLower() + ".", LogKind.Good);
+                AgeChanged?.Invoke(s);
             }
         }
 
