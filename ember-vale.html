@@ -529,6 +529,8 @@ const needK = era => 1 + 0.18 * era;
 const ROAD_UPKEEP = [0, 0.05, 0.1, 0.16];
 // v32: an army marches at this many tiles per unit of game time; a soldier costs gold each season and is never free
 const ARMY_SPEED = 1.0, SOLDIER_TRAIN = 3, SOLDIER_PAY = 0.4;
+// v34: soldiers keep together in formations (patrols) of at most this many, and a realm keeps at most this many of them
+const PATROL_MAX = 16, PATROLS_PER_REALM = 4;
 // the trades whose workers can walk out together
 const STRIKE_JOBS = new Set(['miller', 'baker', 'sawyer', 'smith', 'artisan']);
 // the landed families
@@ -1151,12 +1153,12 @@ class Steward {
     want.grower = placesAt(b => !!LUX_OF[b.type] && f.res[LUX_OF[b.type]] < f.want(LUX_OF[b.type]) * 3);
     // soldiers train at the barracks: a soldier is a person taken from the work, at a training cost in gold, and paid upkeep each season
     const barracksSlots = f.buildings.filter(b => b.built && b.onHome && b.type === 'barracks' && !(b.shut > G.day)).reduce((n, b) => n + BUILD.barracks.slots, 0);
-    want.soldier = barracksSlots ? Math.min(barracksSlots, Math.ceil(pop * (f.enemies.length ? 0.14 : 0.03))) : 0;
+    want.soldier = barracksSlots ? Math.min(barracksSlots, Math.max(0, f.standingWanted() - f.marching)) : 0;   // soldiers already in a formation count toward the garrison
     let rest = pop; for (const k in JOBS) if (k !== 'woodcutter') rest -= want[k];
     // short of hands: the luxuries, tools, planks and goods wait first, then the bread, the miners and the builders
-    // in peace the soldiers are the first to be stood down; at war they are the last to go
+    // the soldiers are the last to be stood down, in peace too: a standing army stays in service until the town is really short
     const cutOrder = ['grower', 'smith', 'sawyer', 'artisan', 'miller', 'baker', 'miner', 'builder'];
-    for (const k of f.enemies.length ? [...cutOrder, 'soldier'] : ['soldier', ...cutOrder]) {
+    for (const k of [...cutOrder, 'soldier']) {
       if (rest >= 0) break;
       const cut = Math.min(Math.max(0, want[k] - (k === 'builder' && work ? 1 : 0)), -rest); want[k] -= cut; rest += cut;
     }
@@ -1408,6 +1410,9 @@ class Steward {
         if (tryBuild('tower', why)) return;
       }
     }
+    // a standing army needs places to drill: a barracks once the garrison outgrows the places there are
+    const drillPlaces = f.buildings.filter(b => b.type === 'barracks' && b.built).length * BUILD.barracks.slots;
+    if (f.age >= 2 && f.standingWanted() > drillPlaces * 3 && f.anyCount('barracks') < 1 + Math.floor(pop / 60) && !sites.some(b => b.type === 'barracks') && tryBuild('barracks', 'Raising a barracks so the standing army has places to drill.')) return;
     if (f.anyCount('dock') < 1 + Math.floor(pop / 25) && tryBuild('dock', 'Building a dock so there is fish in winter.')) return;
     // self-sufficiency: a quarry for stone that never runs out, a forester to keep the woods growing
     if (f.age >= 1 && f.res.stone < c * 0.5 && f.anyCount('quarry') < 1 + Math.floor(pop / 45) && !sites.some(b => b.type === 'quarry')) {
@@ -2075,6 +2080,8 @@ class Settlement {
   get soldiersPay() { return Math.ceil((this.soldiers + this.marching) * SOLDIER_PAY + this.bdef * 0.1); }
   // soldiers at home, and soldiers on the march (who are still paid but no longer live in the town's households)
   get soldiers() { let n = 0; for (const c of this.people) if (c.job === 'soldier') n++; return n; }
+  // how many soldiers the town keeps in service: a standing garrison in peace, a larger levy at war
+  standingWanted() { return Math.ceil((this.pop + this.marching) * (this.enemies.length ? 0.14 : 0.06)); }
   get marching() { let n = 0; for (const r of G.armies) if (r.f === this.id) n += r.members.length; return n; }
   get bdef() { return Army.bdef(this); }
   get drops() {
@@ -2720,31 +2727,102 @@ class Camp {
 // The fighting is watch-only: the realms' stewards give all the orders.
 class Army {
   constructor(d) {
-    Object.assign(this, { st: 'march', path: [], acc: 0, dacc: 0, bd: 0, siegeDays: 0, x: 0, y: 0 }, d);
+    Object.assign(this, { st: 'march', kind: 'war', route: [], wait: 0, alert: false, path: [], acc: 0, dacc: 0, bd: 0, siegeDays: 0, x: 0, y: 0 }, d);
     this.members = (d.members || []).map(m => m instanceof Colonist ? m : new Colonist(m));
   }
   get n() { return this.members.length; }
   toJSON() {
-    return { id: this.id, f: this.f, to: this.to, st: this.st, x: this.x, y: this.y, path: this.path, acc: this.acc, dacc: this.dacc,
+    return { id: this.id, f: this.f, to: this.to, st: this.st, kind: this.kind, route: this.route, wait: this.wait, alert: this.alert, x: this.x, y: this.y, path: this.path, acc: this.acc, dacc: this.dacc,
       bd: this.bd, siegeDays: this.siegeDays, members: this.members.map(m => m.toJSON()) };
   }
   static bdef(f) { let n = 0; for (const b of f.buildings) if (b.built) n += BUILD[b.type].def || 0; return n + (f.hasWonder('wall') ? 30 : 0); }
   static tryMuster(a, b) { if (G.dip.stanceOf(a, b) === 'war' && rnd() < 0.1) Army.muster(a, b); }
-  // soldiers leave a town to march on b, if the town can match b's defence and has enough soldiers to make the march worth it
+  // soldiers leave a town to march on b, if the town can match b's defence and has enough soldiers to make the march worth it.
+  // The army is the largest patrol marching out as it stands, with any other patrol close by and the recruits waiting at the barracks.
   static muster(a, b) {
-    if (!a.tc || !b.tc || G.armies.length >= 8 || G.armies.filter(r => r.f === a.id).length >= 2) return;
-    if (G.armies.some(r => r.f === a.id && r.to === b.id)) return;
-    const pool = a.people.filter(c => c.job === 'soldier' && c.st !== 'exodus');
-    const n = Math.min(30, Math.floor(pool.length * 0.8));
+    const war = G.armies.filter(r => r.kind !== 'patrol');
+    if (!a.tc || !b.tc || war.length >= 8 || war.filter(r => r.f === a.id).length >= 2) return;
+    if (war.some(r => r.f === a.id && r.to === b.id)) return;
+    const pats = G.armies.filter(r => r.kind === 'patrol' && r.f === a.id && r.n).sort((p, q) => q.n - p.n);
+    const base = pats[0], near = base ? pats.slice(1).filter(r => Math.hypot(r.x - base.x, r.y - base.y) < 8) : [];
+    const rec = !base || Math.hypot(base.x - a.tc.x, base.y - a.tc.y) < 10 ? a.people.filter(c => c.job === 'soldier' && c.st !== 'exodus') : [];
+    const total = (base ? base.n : 0) + near.reduce((s, r) => s + r.n, 0) + rec.length;
     // a realm marches when its soldiers can at least match the soldiers and walls it faces
-    if (n < 5 || pool.length < 0.7 * (b.soldiers + b.bdef)) return;
-    const take = pool.slice(0, n), set = new Set(take);
-    G.cols = G.cols.filter(c => !set.has(c));
-    for (const c of take) { c.unload(); c.carry = null; c.path = []; c.tid = 0; c.tx = null; c.ty = null; c.st = 'army'; }
-    G.armies.push(new Army({ id: G.nid++, f: a.id, to: b.id, x: a.tc.x, y: a.tc.y, members: take }));
+    if (total < 5 || total < 0.7 * (b.soldiers + b.marching + b.bdef)) return;
+    let take = [];
+    if (base) { take = base.members.slice(); for (const x of near) if (take.length + x.n <= 30) { take.push(...x.members); G.armies = G.armies.filter(y => y !== x); } }
+    take.push(...Army.take(rec.slice(0, Math.max(0, 30 - take.length))));
+    if (base) { base.members = take; Object.assign(base, { kind: 'war', to: b.id, st: 'march', path: [], route: [], wait: 0, alert: false }); }
+    else G.armies.push(new Army({ id: G.nid++, f: a.id, to: b.id, x: a.tc.x, y: a.tc.y, members: take }));
     G.dirtyC();
-    G.chron.note(`${a.name} mustered ${n} soldiers from its barracks and marched on ${b.name}.`, 'bad');
+    G.chron.note(`${a.name} mustered ${take.length} soldiers and marched on ${b.name}.`, 'bad');
   }
+  // recruits leave the town's households and work to serve in a formation
+  static take(list) {
+    const set = new Set(list);
+    G.cols = G.cols.filter(c => !set.has(c));
+    for (const c of list) { c.unload(); c.carry = null; c.path = []; c.tid = 0; c.tx = null; c.ty = null; c.st = 'army'; }
+    G.dirtyC();
+    return list;
+  }
+  // Soldiers never stand about on their own: a recruit who has reached the barracks falls in under a banner, joining a
+  // formation resting there or forming a new one. In peace the formation (a patrol) walks a loop from its barracks to two
+  // points on the edge of its realm's land and back, taking in new recruits whenever it rests at home.
+  static formUp() {
+    for (const f of G.alive()) {
+      if (!f.tc) continue;
+      // small formations that meet at home join into one banner
+      const mine0 = G.armies.filter(r => r.kind === 'patrol' && r.f === f.id).sort((p, q) => q.n - p.n);
+      for (let i = 0; i < mine0.length; i++) for (let j = mine0.length - 1; j > i; j--) {
+        const p = mine0[i], q = mine0[j];
+        if (p.n + q.n <= PATROL_MAX && (p.wait > 0 || q.wait > 0) && Math.hypot(p.x - q.x, p.y - q.y) < 2.5) { p.members.push(...q.members); q.members = []; G.armies = G.armies.filter(y => y !== q); mine0.splice(j, 1); }
+      }
+      if (!f.soldiers || f.soldiers + f.marching > f.standingWanted()) continue;
+      const at = new Map();
+      for (const c of f.people) {
+        if (c.job !== 'soldier' || c.st === 'exodus') continue;
+        const b = G.byId(c.tid);
+        if (b && Math.hypot(c.x - b.x, c.y - b.y) < 2.5) { if (!at.has(b)) at.set(b, []); at.get(b).push(c); }
+      }
+      if (!at.size) continue;
+      const mine = G.armies.filter(r => r.kind === 'patrol' && r.f === f.id), need = Math.max(1, Math.min(2, f.standingWanted()));
+      for (const [b, list] of at) {
+        for (const r of mine) if (list.length && r.wait > 0 && r.n < PATROL_MAX && Math.hypot(r.x - b.x, r.y - b.y) < 3) r.members.push(...Army.take(list.splice(0, PATROL_MAX - r.n)));
+        if (list.length >= need && mine.length < PATROLS_PER_REALM) {
+          const g = new Army({ id: G.nid++, f: f.id, kind: 'patrol', st: 'patrol', wait: 8, x: b.x, y: b.y, members: Army.take(list.splice(0, PATROL_MAX)) });
+          G.armies.push(g); mine.push(g);
+        }
+      }
+    }
+  }
+  static barracks(f) { return f.buildings.filter(b => b.built && b.onHome && b.type === 'barracks'); }
+  // a loop out to two points on the edge of the realm's land, on opposite sides if it can, and back to the barracks
+  static plan(f) {
+    const W = G.world, t = f.tc, edge = [], route = [];
+    for (let y = t.y - 26; y <= t.y + 26; y += 2) for (let x = t.x - 26; x <= t.x + 26; x += 2) {
+      const T = W.tile(x, y);
+      if (!T || T.own !== f.id || !T.open || T.c) continue;
+      if ([[2, 0], [-2, 0], [0, 2], [0, -2]].some(([dx, dy]) => { const N = W.tile(x + dx, y + dy); return !N || N.own !== f.id; })) edge.push({ x, y });
+    }
+    if (edge.length) {
+      const a = edge[Math.floor(rnd() * edge.length)], far = edge.filter(p => (p.x - t.x) * (a.x - t.x) + (p.y - t.y) * (a.y - t.y) < 0);
+      route.push(a); if (far.length) route.push(far[Math.floor(rnd() * far.length)]);
+    }
+    const bk = Army.barracks(f)[0];
+    route.push(bk ? { x: bk.x, y: bk.y } : { x: t.x, y: t.y });
+    return route;
+  }
+  static patrol(r, home, dt) {
+    if (r.wait > 0) { r.wait -= dt; return; }
+    if (!r.route.length) r.route = Army.plan(home);
+    const d = Army.walk(r, r.route[0], dt, true);
+    if (d < 1.2) {   // there (or no way through): on to the next point
+      r.route.shift(); r.path = [];
+      if (!r.route.length) { r.wait = r.alert ? 0 : 6 + rnd() * 8; r.alert = false; }
+    }
+  }
+  // the formations close to their own town's centre stand with its soldiers when an army reaches the walls
+  static guards(t) { return G.armies.filter(x => x.kind === 'patrol' && x.f === t.id && x.n && Math.hypot(x.x - t.tc.x, x.y - t.tc.y) < 8); }
   // peace (or an alliance) sends the armies between two realms home
   static recall(a, b) { for (const r of G.armies) if ((r.f === a.id && r.to === b.id) || (r.f === b.id && r.to === a.id)) { r.st = 'return'; r.path = []; } }
   // soldiers come home as soldiers of the town they reach (or are lost if there is no home left)
@@ -2757,9 +2835,10 @@ class Army {
     G.dirtyC();
   }
   // march along open country (borders don't stop an army in this version) and return how far the goal still is
-  static walk(r, goal, dt) {
+  static walk(r, goal, dt, strict) {
     if (!r.path.length) {
       const p = G.world.searchBox(Math.round(r.x), Math.round(r.y), goal.x, goal.y, 24, null);
+      if (!p && strict) return 0;   // a patrol skips a point it can't reach
       r.path = p ? p.map(q => ({ x: q.x, y: q.y })) : [{ x: goal.x, y: goal.y }];
     }
     let left = ARMY_SPEED * dt;
@@ -2771,9 +2850,12 @@ class Army {
     return Math.hypot(goal.x - r.x, goal.y - r.y);
   }
   static step(dt) {
+    Army._t = (Army._t || 0) + dt;
+    if (Army._t >= 2) { Army._t = 0; Army.formUp(); }
     for (const r of G.armies.slice()) {
       const home = G.F(r.f);
       if (!home || home.gone || !home.tc) { Army.release(r, null); continue; }
+      if (r.kind === 'patrol') { if (r.n) Army.patrol(r, home, dt); else Army.release(r, null); continue; }
       if (r.st === 'return') { if (Army.walk(r, home.tc, dt) < 1.5) Army.release(r, home); continue; }
       const tgt = G.F(r.to);
       if (!tgt || tgt.gone || !tgt.tc || G.dip.stanceOf(home, tgt) !== 'war') { r.st = 'return'; r.path = []; continue; }
@@ -2782,13 +2864,14 @@ class Army {
           r.st = 'battle'; r.bd = Army.bdef(tgt); r.path = [];
           G.chron.note(`The army of ${home.name} reached the walls of ${tgt.name}.`, 'bad');
           View.float(tgt.tc.x, tgt.tc.y, '⚔', '#ff6a5a');
+          for (const x of G.armies) if (x.kind === 'patrol' && x.f === tgt.id) { x.route = [{ x: tgt.tc.x, y: tgt.tc.y }]; x.path = []; x.wait = 0; x.alert = true; }
         }
       } else if (r.st === 'battle') Army.fight(r, home, tgt, dt);
     }
   }
   // the town's soldiers and towers against the army: each side loses a unit now and then, in proportion to the other's strength
   static fight(r, home, tgt, dt) {
-    const ds = tgt.people.filter(c => c.job === 'soldier'), dn = ds.length + r.bd, an = r.n;
+    const ds = tgt.people.filter(c => c.job === 'soldier'), gd = Army.guards(tgt), dn = ds.length + gd.reduce((s, x) => s + x.n, 0) + r.bd, an = r.n;
     if (!an) { G.chron.note(`The army of ${home.name} was destroyed at the walls of ${tgt.name}.`, 'bad'); Army.release(r, null); return; }
     if (!dn) { r.st = 'siege'; r.siegeDays = 0; G.chron.note(`${home.name} lays siege to ${tgt.name}. Its walls are empty.`, 'bad'); return; }
     r.acc += dt * 0.4 * dn / (an + dn);
@@ -2797,6 +2880,7 @@ class Army {
     while (r.dacc >= 1) {
       r.dacc -= 1;
       if (ds.length) G.kill(ds.splice(Math.floor(rnd() * ds.length), 1)[0]);
+      else if (gd.length) { const g = gd[Math.floor(rnd() * gd.length)]; g.members.splice(Math.floor(rnd() * g.members.length), 1); tgt.stats.died++; tgt.grief += 0.5; if (!g.n) gd.splice(gd.indexOf(g), 1); }
       else if (r.bd > 0) r.bd--;
       else break;
     }
@@ -2804,12 +2888,18 @@ class Army {
   }
   // each day of a siege the town is starved and people die on its walls; after twelve days, or once it is empty, the army takes it
   static daily() {
+    // more soldiers in service than the town wants, in peace: a formation resting at its barracks is dismissed
+    for (const f of G.alive()) {
+      if (f.enemies.length) continue;
+      const rest = G.armies.filter(r => r.kind === 'patrol' && r.f === f.id && r.wait > 0).sort((p, q) => p.n - q.n)[0];
+      if (rest && f.soldiers + f.marching > f.standingWanted() + 4) Army.release(rest, f);
+    }
     for (const r of G.armies.slice()) {
       if (r.st !== 'siege') continue;
       const home = G.F(r.f), tgt = G.F(r.to);
       if (!home || home.gone) { Army.release(r, null); continue; }
       if (!tgt || tgt.gone || !tgt.tc) { r.st = 'return'; continue; }
-      if (tgt.people.filter(c => c.job === 'soldier').length > r.n * 0.5) { r.st = 'battle'; r.bd = Army.bdef(tgt); continue; }
+      if (tgt.people.filter(c => c.job === 'soldier').length + Army.guards(tgt).reduce((s, x) => s + x.n, 0) > r.n * 0.5) { r.st = 'battle'; r.bd = Army.bdef(tgt); continue; }
       r.siegeDays++;
       tgt.res.food = Math.floor(tgt.res.food * 0.85);
       if (rnd() < 0.4) tgt.killN(1);
@@ -3834,7 +3924,7 @@ class Game {
     for (const c of this.cols.slice()) c.update(dt);
     this.trade.step(dt);
     if (this.bands.length) Band.step(dt);
-    if (this.armies.length) Army.step(dt);
+    Army.step(dt);
     Smuggle.step(dt);
     for (const f of this.alive()) {
       f.aiT += dt;
@@ -4574,17 +4664,24 @@ class Renderer {
       const home = G.F(r.f), col = home ? home.color : '#e8d9b0', x = r.x + 0.5, y = r.y + 0.5, n = Math.min(r.members.length, 30);
       ctx.strokeStyle = '#1f1a14'; ctx.lineWidth = rad * 0.3; ctx.fillStyle = col; ctx.beginPath();
       for (let i = 0; i < n; i++) {
-        const c = i % 6, rw = Math.floor(i / 6), px = x - 0.45 + c * 0.18 + (rw % 2) * 0.05, py = y - 0.05 + rw * 0.16 + (r.st === 'march' ? Math.sin(now / 150 + i) * 0.015 : 0);
+        const c = i % 6, rw = Math.floor(i / 6), px = x - 0.45 + c * 0.18 + (rw % 2) * 0.05, py = y - 0.05 + rw * 0.16 + (r.st === 'march' || (r.kind === 'patrol' && r.wait <= 0) ? Math.sin(now / 150 + i) * 0.015 : 0);
         ctx.moveTo(px + rad * 0.9, py); ctx.arc(px, py, rad * 0.9, 0, 7);
       }
       ctx.fill(); ctx.stroke();
       ctx.strokeStyle = '#c62f2a'; ctx.lineWidth = rad * 0.3; ctx.beginPath();
       for (let i = 0; i < n; i++) { const c = i % 6, rw = Math.floor(i / 6), px = x - 0.45 + c * 0.18 + (rw % 2) * 0.05, py = y - 0.05 + rw * 0.16; ctx.moveTo(px + rad * 0.5, py - rad * 0.4); ctx.lineTo(px + rad * 0.5, py - rad * 1.6); }
       ctx.stroke();
-      // the banner, in the home colour with a red fringe
-      ctx.strokeStyle = '#3a2618'; ctx.lineWidth = rad * 0.35; ctx.beginPath(); ctx.moveTo(x - 0.55, y - 0.05); ctx.lineTo(x - 0.55, y - 1.0); ctx.stroke();
-      ctx.fillStyle = col; ctx.fillRect(x - 0.55, y - 1.0, 0.45, 0.28);
-      ctx.fillStyle = '#c62f2a'; ctx.fillRect(x - 0.55, y - 0.78, 0.45, 0.05);
+      // each formation's banner: the home colour with a trim (gold on patrol, red at war) and a pale emblem that tells it from the others
+      ctx.strokeStyle = '#3a2618'; ctx.lineWidth = rad * 0.35; ctx.beginPath(); ctx.moveTo(x - 0.55, y - 0.05); ctx.lineTo(x - 0.55, y - 1.05); ctx.stroke();
+      ctx.fillStyle = col; ctx.fillRect(x - 0.55, y - 1.05, 0.5, 0.36);
+      ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 0.03; ctx.strokeRect(x - 0.55, y - 1.05, 0.5, 0.36);
+      ctx.fillStyle = r.kind === 'patrol' ? '#e0b43a' : '#c62f2a'; ctx.fillRect(x - 0.55, y - 0.74, 0.5, 0.05);
+      ctx.fillStyle = '#f6ecc9';
+      const em = r.id % 4, ex = x - 0.3, ey = y - 0.91;
+      if (em === 0) ctx.fillRect(ex - 0.2, ey - 0.03, 0.4, 0.06);
+      else if (em === 1) { tri(ctx, ex - 0.16, ey + 0.08, ex, ey - 0.1, ex + 0.16, ey + 0.08); }
+      else if (em === 2) { tri(ctx, ex - 0.12, ey, ex, ey - 0.12, ex + 0.12, ey); tri(ctx, ex - 0.12, ey, ex, ey + 0.12, ex + 0.12, ey); }
+      else { ctx.beginPath(); ctx.arc(ex, ey, 0.08, 0, 7); ctx.fill(); }
       if (r.st === 'battle' || r.st === 'siege') {
         const t = G.F(r.to), tc = t && t.tc;
         if (!tc) continue;
@@ -4639,7 +4736,7 @@ class Renderer {
     const items = G.alive().map(f => { const t = f.tc || { x: f.cx, y: f.cy }; return { x: t.x, y: t.y, text: `${f.plague ? '☠ ' : ''}${f.name} · ${f.pop}`, col: f.plague ? '#d9f2b0' : '#ffffff', dot: f.color, ring: f.faith ? (G.faiths.get(f.faith) || {}).color : '', sel: f.id === UI.sel }; })
       .concat(G.camps().map(c => ({ x: c.x, y: c.y, text: `${c.name} · ${Math.floor(c.str)}⚔`, col: '#ffd8d0', dot: '#c8352a' })))
       .concat(G.bands.map(b => ({ x: b.x, y: b.y, text: `${b.name} · ${b.n} settlers`, col: '#fff6d8', dot: b.color })))
-      .concat(G.armies.filter(r => r.members.length).map(r => { const h = G.F(r.f); return { x: r.x, y: r.y, text: `${h ? h.name : 'Army'} army · ${r.members.length}`, col: '#ffd8d0', dot: h ? h.color : '#c62f2a' }; }));
+      .concat(G.armies.filter(r => r.members.length).map(r => { const h = G.F(r.f); return { x: r.x, y: r.y, text: `${h ? h.name : 'Army'} ${r.kind === 'patrol' ? 'guard' : 'army'} · ${r.members.length}`, col: '#ffd8d0', dot: h ? h.color : '#c62f2a' }; }));
     ctx.font = `700 ${kc > 20 ? 12 : 10.5}px Figtree, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const it of items) {
       let sx = (it.x + 0.5 - cam.x) * kc, sy = (it.y - 0.95 - cam.y) * kc;
@@ -4864,8 +4961,8 @@ class Interface {
     const se = G.season, hv = f.harvest || 1;
     const fams = new Map(); for (const b of f.buildings) if (b.lord) { const s = G.byId(b.lord); if (s && s.fam) fams.set(s.fam, (fams.get(s.fam) || 0) + 1); }
     const top = [...fams.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
-    const marching = f.marching, mine = G.armies.filter(r => r.f === f.id).map(r => { const t = G.F(r.to), tn = t ? t.name : 'an enemy'; return r.st === 'march' ? `marching on ${tn}` : r.st === 'battle' ? `fighting at ${tn}` : r.st === 'siege' ? `besieging ${tn}` : 'coming home'; });
-    const army = `<b>Soldiers:</b> ${f.soldiers} at the barracks${marching ? `, ${marching} on the march` : ''}, costing ${f.soldiersPay} gold a season${mine.length ? `. <b>Army:</b> ${mine.join('; ')}` : ''}. `;
+    const marching = f.marching, pats = G.armies.filter(r => r.f === f.id && r.kind === 'patrol'), patN = pats.reduce((s, r) => s + r.n, 0), mine = G.armies.filter(r => r.f === f.id && r.kind !== 'patrol').map(r => { const t = G.F(r.to), tn = t ? t.name : 'an enemy'; return r.st === 'march' ? `marching on ${tn}` : r.st === 'battle' ? `fighting at ${tn}` : r.st === 'siege' ? `besieging ${tn}` : 'coming home'; });
+    const army = `<b>${f.enemies.length ? 'Soldiers' : 'Standing army'}:</b> ${f.soldiers + marching} in service${patN ? ` (${patN} in ${pats.length} patrol${pats.length > 1 ? 's' : ''}${f.soldiers ? `, ${f.soldiers} drilling` : ''})` : f.soldiers ? ' at the barracks' : ''}${marching - patN ? `, ${marching - patN} on the march` : ''}, costing ${f.soldiersPay} gold a season${mine.length ? `. <b>Army:</b> ${mine.join('; ')}` : ''}. `;
     const life = army + `<b>Harvest:</b> ${se === 2 || se === 3 ? (hv < 1 ? 'failed this year' : hv > 1 ? 'a bumper year' : 'an ordinary year') : se === 0 ? 'fields sown, granary running down' : 'the crop is growing'}; granary ${Math.floor(f.res.food)} of ${f.cap}${f.famine > G.day ? '; <b>famine</b>' : ''}. `
       + (f.strike > G.day ? `<b>Strike:</b> ${f.strikeN} workers out over ${f.strikeWhy}. ` : f.payK > 1.01 ? `Strikes have won wages ${Math.round((f.payK - 1) * 100)}% higher. ` : '')
       + (f.fair && f.fair.until > G.day ? `<b>Fair:</b> merchants from ${f.fair.guests.map(id => (G.F(id) || {}).name).filter(Boolean).join(', ')} for ${f.fair.until - G.day} more day${f.fair.until - G.day > 1 ? 's' : ''}. ` : '')
