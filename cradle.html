@@ -47,7 +47,7 @@ h1{font:700 22px/1 var(--font-d);margin:0;letter-spacing:-.01em}
 .chip.food i{color:var(--food)}.chip.wood i{color:var(--wood)}.chip.stone i{color:var(--stone)}.chip.know i{color:var(--know)}
 .neg{color:var(--bad)!important}.pos{color:var(--good)!important}
 
-#view{width:100%;height:96px;border-radius:8px;border:1px solid var(--line);display:block;flex:none}
+#view{width:100%;height:158px;border-radius:8px;border:1px solid var(--line);display:block;flex:none}
 #toast{min-height:20px;font-size:13px;font-weight:500;flex:none}
 #toast.bad{color:var(--bad)}#toast.good{color:var(--good)}
 
@@ -259,23 +259,66 @@ logEl.append(winBox,logList,el('div','',''));logEl.lastChild.style.cssText='padd
 /* ---------- render ---------- */
 const cv=$('#view'),ctx=cv.getContext('2d');
 function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+let animT=0;
+function person(x,y,col,kind,ph){
+  const c=css(col);ctx.strokeStyle=c;ctx.fillStyle=c;ctx.lineWidth=2;ctx.lineCap='round';
+  let lean=0,arm=Math.sin(ph);
+  if(kind==='f')lean=(Math.sin(ph)+1)*.5*3;           /* farmer bends to hoe */
+  const hx=x+lean,hy=y-11+Math.abs(lean)*.3;
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-6);ctx.lineTo(hx,hy+3);ctx.stroke();   /* body */
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-2+Math.sin(ph*2)*(kind==='i'?2:0),y+3);ctx.moveTo(x,y);ctx.lineTo(x+2,y+3);ctx.stroke(); /* legs */
+  ctx.fillStyle=css('--fg');ctx.beginPath();ctx.arc(hx,hy,2.6,0,6.3);ctx.fill();         /* head */
+  ctx.strokeStyle=c;
+  if(kind==='w'||kind==='s'){                          /* swing axe / pick */
+    const ang=-1.2+(arm+1)*.9,ex=hx+Math.cos(ang)*8,ey=hy+3+Math.sin(ang)*8;
+    ctx.beginPath();ctx.moveTo(hx,hy+3);ctx.lineTo(ex,ey);ctx.stroke();
+    ctx.fillStyle=css(kind==='w'?'--stone':'--fg');ctx.fillRect(ex-2,ey-2,4,3);
+  }else if(kind==='f'){
+    ctx.beginPath();ctx.moveTo(hx,hy+3);ctx.lineTo(hx+7,y+1);ctx.stroke();
+  }else if(kind==='k'){                                 /* hold a book */
+    ctx.fillStyle=css('--know');ctx.fillRect(x+1,y-8+Math.sin(ph)*1,6,4);
+  }
+}
+function tree(x,y){ctx.fillStyle=css('--wood');ctx.fillRect(x-1.5,y-8,3,8);ctx.fillStyle=css('--food');ctx.beginPath();ctx.arc(x,y-12,6,0,6.3);ctx.fill()}
+function rock(x,y){ctx.fillStyle=css('--stone');ctx.beginPath();ctx.moveTo(x-9,y);ctx.lineTo(x-4,y-9);ctx.lineTo(x+3,y-12);ctx.lineTo(x+10,y);ctx.fill()}
 function draw(){
   const dpr=Math.min(2,window.devicePixelRatio||1),w=cv.clientWidth,h=cv.clientHeight;
   if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.fillStyle=css('--sky');ctx.fillRect(0,0,w,h);
-  const gy=h-34;ctx.fillStyle=css('--ground');ctx.fillRect(0,gy,w,34);
-  const huts=Math.min(nb('hut')+2,Math.floor(w/22)-1);
-  for(let i=0;i<huts;i++){const x=10+i*22,y=gy-4-(i%2)*6;
-    ctx.fillStyle=css('--hut');ctx.fillRect(x,y-12,16,12);
-    ctx.fillStyle=css('--roof');ctx.beginPath();ctx.moveTo(x-2,y-12);ctx.lineTo(x+8,y-21);ctx.lineTo(x+18,y-12);ctx.fill()}
-  ctx.fillStyle=css('--food');const fields=Math.min(nb('farm'),Math.floor(w/14));
-  for(let i=0;i<fields;i++)ctx.fillRect(10+i*14,gy+8,11,5);
-  if(nb('lib')){ctx.fillStyle=css('--know');ctx.fillRect(w-70,gy-20,14,20)}
-  if(nb('temple')){ctx.fillStyle=css('--stone');ctx.fillRect(w-46,gy-24,16,24);ctx.fillRect(w-49,gy-27,22,4)}
-  if(nb('wall')){ctx.strokeStyle=css('--wood');ctx.lineWidth=3;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(2,gy+2);ctx.lineTo(w-2,gy+2);ctx.stroke();ctx.setLineDash([])}
-  ctx.fillStyle=css('--fg');const dots=Math.min(S.pop,Math.floor(w/5));
-  for(let i=0;i<dots;i++)ctx.fillRect(6+(i*5)%(w-12),gy+18+(i%2)*6,2,3)}
+  const hy=h*.34;                                       /* skyline row of homes */
+  ctx.fillStyle=css('--ground');ctx.fillRect(0,hy,w,h-hy);
+  const huts=Math.min(nb('hut')+2,Math.floor(w/20)-1);
+  for(let i=0;i<huts;i++){const x=8+i*20,y=hy+2;
+    ctx.fillStyle=css('--hut');ctx.fillRect(x,y-9,13,9);
+    ctx.fillStyle=css('--roof');ctx.beginPath();ctx.moveTo(x-2,y-9);ctx.lineTo(x+6.5,y-16);ctx.lineTo(x+15,y-9);ctx.fill()}
+  if(nb('wall')){ctx.strokeStyle=css('--wood');ctx.lineWidth=3;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(2,hy+5);ctx.lineTo(w-2,hy+5);ctx.stroke();ctx.setLineDash([])}
+  /* four work zones */
+  const cw=w/4,top=hy+20,w_=S.work,names=[['f','Farmers','--food',w_.f],['w','Loggers','--wood',w_.w],['s','Miners','--stone',w_.s],['k','Scholars','--know',w_.k]];
+  names.forEach(([k,label,col,n],z)=>{
+    const x0=z*cw;
+    if(z>0){ctx.fillStyle=css('--line');ctx.fillRect(x0,hy+10,1,h-hy-12)}
+    /* backdrop */
+    if(k==='f'){ctx.fillStyle=css('--food');ctx.globalAlpha=.35;for(let i=0;i<Math.min(2+nb('farm'),6);i++)ctx.fillRect(x0+6,top+i*7-2,cw-12,4);ctx.globalAlpha=1}
+    if(k==='w'){for(let i=0;i<3;i++)tree(x0+cw*(.2+i*.3),top+2+(i%2)*3)}
+    if(k==='s'){rock(x0+cw*.3,top+4);rock(x0+cw*.7,top+2)}
+    if(k==='k'){ctx.fillStyle=css('--stone');ctx.fillRect(x0+cw*.5-12,top-14,24,16);ctx.fillStyle=css('--roof');ctx.fillRect(x0+cw*.5-15,top-18,30,5);
+      if(nb('lib')){ctx.fillStyle=css('--know');ctx.fillRect(x0+cw*.5-5,top-9,10,11)}}
+    /* people: up to 12 per zone, in rows */
+    const shown=Math.min(n,12),cols=Math.max(2,Math.floor((cw-10)/14));
+    for(let i=0;i<shown;i++){const px=x0+9+(i%cols)*14+((Math.floor(i/cols))%2)*5,py=top+20+Math.floor(i/cols)*17;
+      person(px,py,col,k,animT*.006+i*1.7)}
+    ctx.fillStyle=css('--muted');ctx.font='600 10px Inter,system-ui,sans-serif';ctx.textBaseline='alphabetic';
+    ctx.fillText(label+' '+n+(n>12?'  (12 shown)':''),x0+6,h-5)});
+  /* idle folk wander along the skyline */
+  const idl=Math.max(0,S.pop-w_.f-w_.w-w_.s-w_.k);
+  for(let i=0;i<Math.min(idl,10);i++){const px=((i*37+animT*.012)%(w+20))-10;person(px,hy+16,'--muted','i',animT*.01+i)}
+}
+function frame(t){
+  const dt=Math.min(50,t-(frame.last||t));frame.last=t;
+  if(S.speed&&!S.over&&!document.hidden){animT+=dt*Math.min(S.speed,3);draw()}
+  requestAnimationFrame(frame)}
+if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches)requestAnimationFrame(frame);
 
 function render(light){
   const r=rates(),m=mods();
