@@ -1,0 +1,313 @@
+<title>Cradle</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: fixed one-screen app. Header + resource strip on top, village canvas, scrolling tab panel, bottom speed/tab bar. */
+:root{
+  --bg:#eceee8; --surface:#f8f9f5; --line:#d4d8cd; --fg:#1c2620; --muted:#5d6a60;
+  --accent:#b4532a; --accent-fg:#fff;
+  --food:#4f8a2c; --wood:#8a5a2b; --stone:#6a7886; --know:#3669b0;
+  --sky:#dfe7e0; --ground:#c9cfb8; --hut:#a8774a; --roof:#7a3f22;
+  --bad:#b3372b; --good:#2f7d3c;
+  --font-d:'Space Grotesk',system-ui,sans-serif; --font-b:'Inter',system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#111715; --surface:#1a231f; --line:#2b372f; --fg:#e4ebe3; --muted:#92a095;
+  --accent:#e0804f; --accent-fg:#1a1006;
+  --food:#86c25a; --wood:#c89257; --stone:#9aabbb; --know:#6fa3ea;
+  --sky:#18231f; --ground:#2a3426; --hut:#8a6440; --roof:#c4673c;
+  --bad:#ef7b6e; --good:#7ccf88; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111715; --surface:#1a231f; --line:#2b372f; --fg:#e4ebe3; --muted:#92a095;
+  --accent:#e0804f; --accent-fg:#1a1006;
+  --food:#86c25a; --wood:#c89257; --stone:#9aabbb; --know:#6fa3ea;
+  --sky:#18231f; --ground:#2a3426; --hut:#8a6440; --roof:#c4673c;
+  --bad:#ef7b6e; --good:#7ccf88; color-scheme:dark}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font:14px/1.4 var(--font-b);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0;overflow:hidden;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+#app{height:100%;display:flex;flex-direction:column;gap:10px;padding-block:10px;max-width:560px;margin:0 auto}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+h1{font:700 22px/1 var(--font-d);margin:0;letter-spacing:-.01em}
+.era{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+.year{font:700 20px/1 var(--font-d);text-align:right;font-variant-numeric:tabular-nums}
+.pop{font-size:12px;color:var(--muted);text-align:right;margin-top:4px;font-variant-numeric:tabular-nums}
+
+.res{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.chip{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;min-width:0}
+.chip b{display:block;font:700 16px/1.1 var(--font-d);font-variant-numeric:tabular-nums}
+.chip span{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip i{display:block;font-style:normal;font-size:11px;text-transform:uppercase;letter-spacing:.07em;margin-bottom:2px}
+.chip.food i{color:var(--food)}.chip.wood i{color:var(--wood)}.chip.stone i{color:var(--stone)}.chip.know i{color:var(--know)}
+.neg{color:var(--bad)!important}.pos{color:var(--good)!important}
+
+#view{width:100%;height:96px;border-radius:8px;border:1px solid var(--line);display:block;flex:none}
+#toast{min-height:20px;font-size:13px;font-weight:500;flex:none}
+#toast.bad{color:var(--bad)}#toast.good{color:var(--good)}
+
+main{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:4px 12px}
+.panel{display:none}.panel.on{display:block}
+.row{padding:10px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;justify-content:space-between}
+.row:last-child{border-bottom:0}
+.row .txt{min-width:0;flex:1}
+.row h3{margin:0;font:600 14px/1.2 var(--font-b)}
+.row p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+.row .cnt{font:700 13px var(--font-d);color:var(--muted);margin-left:6px}
+.btn{background:var(--accent);color:var(--accent-fg);border:0;border-radius:8px;padding:9px 14px;font-weight:600;min-height:40px;white-space:nowrap}
+.btn:disabled{background:var(--line);color:var(--muted);cursor:default}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.done{font-size:12px;color:var(--good);font-weight:600}
+
+.job{padding:10px 0;border-bottom:1px solid var(--line)}
+.job:last-of-type{border-bottom:0}
+.job .top{display:flex;justify-content:space-between;font-weight:600}
+.job .top span:last-child{font-variant-numeric:tabular-nums}
+.job small{color:var(--muted);font-size:12px}
+input[type=range]{width:100%;margin:8px 0 2px;height:28px;accent-color:var(--accent)}
+.idle{padding:10px 0;font-size:13px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:8px}
+
+.log{list-style:none;margin:0;padding:0}
+.log li{padding:8px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;gap:10px}
+.log li time{color:var(--muted);min-width:64px;font-variant-numeric:tabular-nums;flex:none}
+.log li.bad{color:var(--bad)}.log li.good{color:var(--good)}
+.win{background:var(--bg);border:1px solid var(--accent);border-radius:8px;padding:10px 12px;margin:10px 0;font-size:13px}
+.win h3{margin:0 0 4px;font:700 15px var(--font-d)}
+
+nav{display:flex;flex-direction:column;gap:6px;flex:none}
+.tabs,.speed{display:grid;gap:6px}
+.tabs{grid-template-columns:repeat(4,1fr)}
+.speed{grid-template-columns:repeat(4,1fr)}
+.tabs button,.speed button{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 4px;font-weight:600;min-height:42px}
+.tabs button[aria-selected=true]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.speed button[aria-pressed=true]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+@media (prefers-reduced-motion:no-preference){#toast{transition:color .2s}}
+</style>
+
+<div id="app">
+  <header>
+    <div><h1>Cradle</h1><div class="era" id="era">Stone Age</div></div>
+    <div><div class="year" id="year">4000 BC</div><div class="pop" id="pop"></div></div>
+  </header>
+  <div class="res" id="res"></div>
+  <canvas id="view" aria-label="Your settlement"></canvas>
+  <div id="toast" role="status"></div>
+  <main>
+    <section class="panel on" id="p-folk"></section>
+    <section class="panel" id="p-build"></section>
+    <section class="panel" id="p-tech"></section>
+    <section class="panel" id="p-log"></section>
+  </main>
+  <nav>
+    <div class="tabs" role="tablist" id="tabs"></div>
+    <div class="speed" id="speed"></div>
+  </nav>
+</div>
+
+<script>
+(function(){
+'use strict';
+const $=s=>document.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
+const fmt=n=>Math.abs(n)>=1000?(n/1000).toFixed(1)+'k':Math.round(n).toString();
+const sgn=n=>(n>=0?'+':'−')+fmt(Math.abs(n));
+
+const BUILDINGS=[
+ {id:'hut',name:'Hut',desc:'Houses 5 more people',cost:{wood:12}},
+ {id:'farm',name:'Field',desc:'+10% food from farmers',cost:{wood:15}},
+ {id:'saw',name:'Sawpit',desc:'+10% wood from loggers',cost:{wood:10,stone:6}},
+ {id:'mason',name:'Mason yard',desc:'+10% stone from miners',cost:{wood:18,stone:8}},
+ {id:'lib',name:'Library',desc:'+15% knowledge',cost:{wood:24,stone:18}},
+ {id:'temple',name:'Temple',desc:'+8% knowledge, softens plague',cost:{wood:20,stone:35}},
+ {id:'wall',name:'Palisade',desc:'Raises defence against raiders',cost:{wood:30,stone:20}},
+];
+const TECHS=[
+ {id:'agri',name:'Agriculture',cost:15,req:[],desc:'+30% food',m:{food:.3}},
+ {id:'tools',name:'Stone Tools',cost:30,req:[],desc:'+30% wood and stone',m:{wood:.3,stone:.3}},
+ {id:'bronze',name:'Bronze Working',cost:60,req:['tools'],desc:'+30% stone, defence +2',m:{stone:.3},def:2},
+ {id:'writing',name:'Writing',cost:90,req:['agri'],desc:'+30% knowledge',m:{know:.3}},
+ {id:'irrig',name:'Irrigation',cost:140,req:['agri'],desc:'+40% food',m:{food:.4}},
+ {id:'iron',name:'Iron Working',cost:220,req:['bronze'],desc:'+20% wood, +30% stone, defence +3',m:{wood:.2,stone:.3},def:3},
+ {id:'math',name:'Mathematics',cost:300,req:['writing'],desc:'+30% knowledge',m:{know:.3}},
+ {id:'phil',name:'Philosophy',cost:420,req:['math'],desc:'+20% knowledge, huts house +1',m:{know:.2},hut:1},
+ {id:'eng',name:'Engineering',cost:600,req:['iron','math'],desc:'+30% stone, huts house +2',m:{stone:.3},hut:2},
+ {id:'med',name:'Medicine',cost:800,req:['phil'],desc:'Plague kills far fewer, +10% food',m:{food:.1},plague:.5},
+ {id:'print',name:'Printing',cost:1200,req:['phil','eng'],desc:'+50% knowledge',m:{know:.5}},
+ {id:'steam',name:'Steam Power',cost:2000,req:['print','med'],desc:'Ushers in the Industrial Age',m:{wood:.5,stone:.5,food:.3},final:1},
+];
+const ERAS=[['steam','Industrial Age'],['print','Renaissance'],['math','Classical Age'],['iron','Iron Age'],['bronze','Bronze Age']];
+const JOBS=[
+ {k:'f',res:'food',name:'Farmers',unit:2.5},{k:'w',res:'wood',name:'Loggers',unit:2},
+ {k:'s',res:'stone',name:'Miners',unit:1.6},{k:'k',res:'know',name:'Scholars',unit:1}];
+const KEY='cradle-save-v1';
+
+function fresh(){return{tick:0,year:-4000,pop:10,food:40,wood:25,stone:0,know:0,
+  work:{f:5,w:4,s:0,k:1},b:{},t:{},log:[],won:false,over:false,peak:10,speed:1}}
+let S=load()||fresh();
+function load(){try{const d=JSON.parse(localStorage.getItem(KEY));return d&&d.work?d:null}catch(e){return null}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+
+/* ---------- model ---------- */
+const nb=id=>S.b[id]||0;
+const has=id=>!!S.t[id];
+function cap(){let hut=5;TECHS.forEach(t=>{if(has(t.id)&&t.hut)hut+=t.hut});return 15+nb('hut')*hut}
+function mods(){
+  const m={food:1,wood:1,stone:1,know:1};
+  TECHS.forEach(t=>{if(has(t.id)&&t.m)for(const k in t.m)m[k]+=t.m[k]});
+  m.food+=.1*nb('farm');m.wood+=.1*nb('saw');m.stone+=.1*nb('mason');
+  m.know+=.15*nb('lib')+.08*nb('temple');
+  return m}
+function defence(){let d=nb('wall')*1.5;TECHS.forEach(t=>{if(has(t.id)&&t.def)d+=t.def});return d}
+function rates(){
+  const m=mods(),w=S.work,r={};
+  r.food=w.f*2.5*m.food;r.wood=w.w*2*m.wood;r.stone=w.s*1.6*m.stone;
+  r.know=w.k*1*m.know+S.pop*.03;
+  r.eat=S.pop*1;return r}
+function bcost(b){const n=nb(b.id),o={};for(const k in b.cost)o[k]=Math.ceil(b.cost[k]*Math.pow(1.12,n));return o}
+const canPay=c=>Object.keys(c).every(k=>S[k]>=c[k]);
+const foodCap=()=>100+S.pop*8;
+function era(){for(const [t,n] of ERAS)if(has(t))return n;return'Stone Age'}
+function yearStr(y){return y<0?(-y)+' BC':(y===0?1:y)+' AD'}
+function say(txt,kind){S.log.unshift({y:S.year,t:txt,k:kind||''});S.log.length=Math.min(S.log.length,60);
+  const t=$('#toast');t.textContent=txt;t.className=kind||''}
+function idle(){const w=S.work;return S.pop-w.f-w.w-w.s-w.k}
+function fitWork(){let ex=-idle();const w=S.work;
+  while(ex>0){const k=Object.keys(w).sort((a,b)=>w[b]-w[a])[0];if(w[k]<=0)break;w[k]--;ex--}}
+
+function tick(){
+  if(S.over)return;
+  S.tick++;S.year+=10;
+  const r=rates();
+  S.wood+=r.wood;S.stone+=r.stone;S.know+=r.know;
+  S.food=Math.min(foodCap(),S.food+r.food-r.eat);
+  if(S.food<0){S.food=0;const d=Math.max(1,Math.ceil(S.pop*.08));S.pop=Math.max(0,S.pop-d);
+    if(S.tick%3===0)say('Famine. '+d+' people starved.','bad')}
+  else if(S.food>S.pop*1.5&&S.pop<cap()){S.pop=Math.min(cap(),S.pop+Math.max(1,Math.round(S.pop*.07)))}
+  if(S.pop>S.peak)S.peak=S.pop;
+  fitWork();
+  if(S.pop<=0){S.over=true;say('Your people are gone. The story ends here.','bad')}
+  else if(Math.random()<.07)event();
+  save();render();
+}
+
+function event(){
+  const roll=Math.random(),t=S.tick;
+  if(roll<.22){const g=Math.round(S.pop*3+10);S.food=Math.min(foodCap(),S.food+g);say('A bumper harvest. +'+g+' food.','good')}
+  else if(roll<.40){const l=Math.round(S.food*.4);S.food-=l;say('Drought. You lose '+l+' food.','bad')}
+  else if(roll<.56){const k=Math.round(10+t*1.2);S.know+=k;say('A thinker\'s breakthrough. +'+k+' knowledge.','good')}
+  else if(roll<.70&&S.pop<cap()){const n=Math.min(cap()-S.pop,Math.max(2,Math.round(S.pop*.15)));S.pop+=n;say(n+' migrants join your people.','good')}
+  else if(roll<.84){let f=.12;if(has('med'))f*=.5;f*=1-Math.min(.5,.1*nb('temple'));
+    const d=Math.max(1,Math.round(S.pop*f));S.pop=Math.max(1,S.pop-d);say('Plague. '+d+' people die.','bad')}
+  else{const power=1+t/45,def=defence();
+    if(def>=power)say('Raiders arrive but your defences hold.','good');
+    else{const d=Math.max(1,Math.round(S.pop*.06));S.pop=Math.max(1,S.pop-d);S.wood*=.8;S.stone*=.8;S.food*=.8;
+      say('Raiders sack the village. '+d+' die, stores looted.','bad')}}
+  fitWork()}
+
+/* ---------- UI build (once) ---------- */
+const TABS=[['folk','Folk'],['build','Build'],['tech','Tech'],['log','Chronicle']];
+const tabs=$('#tabs');
+TABS.forEach(([id,name],i)=>{const b=el('button','',name);b.setAttribute('role','tab');b.setAttribute('aria-selected',i===0);
+  b.onclick=()=>{TABS.forEach(([x],j)=>{$('#p-'+x).classList.toggle('on',x===id);tabs.children[j].setAttribute('aria-selected',x===id)})};tabs.appendChild(b)});
+
+const speedEl=$('#speed');
+[[0,'Pause'],[1,'1×'],[3,'3×'],[10,'10×']].forEach(([v,l])=>{const b=el('button','',l);b.dataset.v=v;
+  b.onclick=()=>{S.speed=v;save();render()};speedEl.appendChild(b)});
+
+const resEl=$('#res'),chips={};
+[['food','Food'],['wood','Wood'],['stone','Stone'],['know','Know']].forEach(([k,n])=>{
+  const c=el('div','chip '+k,'<i>'+n+'</i><b></b><span></span>');resEl.appendChild(c);chips[k]=c});
+
+const folk=$('#p-folk'),jobEls={};
+JOBS.forEach(j=>{
+  const d=el('div','job','<div class="top"><span>'+j.name+'</span><span></span></div><input type="range" min="0" value="0" id="r-'+j.k+'" aria-label="'+j.name+'"><small></small>');
+  const inp=d.querySelector('input');
+  inp.oninput=()=>{const others=S.work.f+S.work.w+S.work.s+S.work.k-S.work[j.k];
+    const v=Math.max(0,Math.min(+inp.value,S.pop-others));S.work[j.k]=v;render(true)};
+  folk.appendChild(d);jobEls[j.k]={d,inp,n:d.children[0].children[1],sm:d.querySelector('small')}});
+const idleEl=el('div','idle','<span></span>');const balBtn=el('button','btn ghost','Balance');
+balBtn.onclick=()=>{const p=S.pop,w=S.work;w.f=Math.ceil(p*.45);w.w=Math.floor(p*.25);w.s=Math.floor(p*.12);w.k=p-w.f-w.w-w.s;
+  if(w.k<0){w.f+=w.k;w.k=0}render()};
+idleEl.appendChild(balBtn);folk.appendChild(idleEl);
+
+const buildEls={};
+BUILDINGS.forEach(b=>{const row=el('div','row','<div class="txt"><h3>'+b.name+'<span class="cnt"></span></h3><p>'+b.desc+'</p><p class="cost"></p></div>');
+  const btn=el('button','btn','Build');
+  btn.onclick=()=>{const c=bcost(b);if(!canPay(c))return;for(const k in c)S[k]-=c[k];S.b[b.id]=nb(b.id)+1;save();render()};
+  row.appendChild(btn);$('#p-build').appendChild(row);buildEls[b.id]={row,btn,cnt:row.querySelector('.cnt'),cost:row.querySelector('.cost')}});
+
+const techEls={};
+TECHS.forEach(t=>{const row=el('div','row','<div class="txt"><h3>'+t.name+'</h3><p>'+t.desc+'</p><p class="need"></p></div>');
+  const btn=el('button','btn','Research');
+  btn.onclick=()=>{if(has(t.id)||S.know<t.cost||!t.req.every(has))return;S.know-=t.cost;S.t[t.id]=1;
+    say('Discovered '+t.name+'.','good');
+    if(t.final&&!S.won){S.won=true;say('Your civilization has reached the Industrial Age.','good')}save();render()};
+  row.appendChild(btn);$('#p-tech').appendChild(row);techEls[t.id]={row,btn,need:row.querySelector('.need')}});
+
+const logEl=$('#p-log');
+const resetBtn=el('button','btn ghost','Start a new civilization');let armed=0;
+resetBtn.onclick=()=>{if(!armed){armed=1;resetBtn.textContent='Tap again to erase this one';setTimeout(()=>{armed=0;resetBtn.textContent='Start a new civilization'},3500);return}
+  armed=0;S=fresh();$('#toast').textContent='';save();render()};
+const winBox=el('div','win');const logList=el('ul','log');
+logEl.append(winBox,logList,el('div','',''));logEl.lastChild.style.cssText='padding:10px 0';logEl.lastChild.appendChild(resetBtn);
+
+/* ---------- render ---------- */
+const cv=$('#view'),ctx=cv.getContext('2d');
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+function draw(){
+  const dpr=Math.min(2,window.devicePixelRatio||1),w=cv.clientWidth,h=cv.clientHeight;
+  if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle=css('--sky');ctx.fillRect(0,0,w,h);
+  const gy=h-34;ctx.fillStyle=css('--ground');ctx.fillRect(0,gy,w,34);
+  const huts=Math.min(nb('hut')+2,Math.floor(w/22)-1);
+  for(let i=0;i<huts;i++){const x=10+i*22,y=gy-4-(i%2)*6;
+    ctx.fillStyle=css('--hut');ctx.fillRect(x,y-12,16,12);
+    ctx.fillStyle=css('--roof');ctx.beginPath();ctx.moveTo(x-2,y-12);ctx.lineTo(x+8,y-21);ctx.lineTo(x+18,y-12);ctx.fill()}
+  ctx.fillStyle=css('--food');const fields=Math.min(nb('farm'),Math.floor(w/14));
+  for(let i=0;i<fields;i++)ctx.fillRect(10+i*14,gy+8,11,5);
+  if(nb('lib')){ctx.fillStyle=css('--know');ctx.fillRect(w-70,gy-20,14,20)}
+  if(nb('temple')){ctx.fillStyle=css('--stone');ctx.fillRect(w-46,gy-24,16,24);ctx.fillRect(w-49,gy-27,22,4)}
+  if(nb('wall')){ctx.strokeStyle=css('--wood');ctx.lineWidth=3;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(2,gy+2);ctx.lineTo(w-2,gy+2);ctx.stroke();ctx.setLineDash([])}
+  ctx.fillStyle=css('--fg');const dots=Math.min(S.pop,Math.floor(w/5));
+  for(let i=0;i<dots;i++)ctx.fillRect(6+(i*5)%(w-12),gy+18+(i%2)*6,2,3)}
+
+function render(light){
+  const r=rates(),m=mods();
+  $('#era').textContent=era();$('#year').textContent=yearStr(S.year);
+  $('#pop').textContent='Pop '+S.pop+' / '+cap()+(idle()>0?' · '+idle()+' idle':'');
+  const net={food:r.food-r.eat,wood:r.wood,stone:r.stone,know:r.know};
+  for(const k in chips){const c=chips[k];c.querySelector('b').textContent=fmt(S[k]);
+    const s=c.querySelector('span');s.textContent=sgn(net[k])+' /turn';s.className=net[k]<0?'neg':''}
+  JOBS.forEach(j=>{const e=jobEls[j.k],n=S.work[j.k];e.inp.max=S.pop;e.inp.value=n;e.n.textContent=n;
+    const per=j.unit*m[j.res];e.sm.textContent=n+' × '+per.toFixed(1)+' '+j.res+' each = '+(n*per).toFixed(0)+' per turn'
+      +(j.k==='f'?' · people eat '+S.pop:'')});
+  idleEl.firstChild.textContent=idle()+' idle · idle people produce nothing';
+  BUILDINGS.forEach(b=>{const e=buildEls[b.id],c=bcost(b);e.cnt.textContent=nb(b.id)?' ×'+nb(b.id):'';
+    e.cost.textContent=Object.keys(c).map(k=>c[k]+' '+k).join(', ');e.btn.disabled=!canPay(c)});
+  TECHS.forEach(t=>{const e=techEls[t.id];
+    if(has(t.id)){e.btn.style.display='none';e.need.innerHTML='<span class="done">Researched</span>'}
+    else{e.btn.style.display='';const ok=t.req.every(has);e.btn.disabled=!ok||S.know<t.cost;
+      e.need.textContent=(ok?'':'Needs '+t.req.filter(x=>!has(x)).map(x=>TECHS.find(y=>y.id===x).name).join(', ')+' · ')+t.cost+' knowledge'}});
+  [...speedEl.children].forEach(b=>b.setAttribute('aria-pressed',+b.dataset.v===S.speed));
+  winBox.style.display=(S.won||S.over)?'':'none';
+  winBox.innerHTML=S.over?'<h3>The end</h3>Your civilization lasted until '+yearStr(S.year)+' with a peak population of '+S.peak+'.'
+    :S.won?'<h3>Industrial Age reached</h3>Reached by '+yearStr(S.year)+'. Peak population '+S.peak+'. Keep playing, or start over below.':'';
+  logList.innerHTML=S.log.map(l=>'<li class="'+l.k+'"><time>'+yearStr(l.y)+'</time><span>'+l.t.replace(/</g,'&lt;')+'</span></li>').join('')||'<li>Your story begins in 4000 BC.</li>';
+  draw()}
+
+/* ---------- loop ---------- */
+let last=performance.now(),acc=0;
+setInterval(()=>{const n=performance.now(),dt=Math.min(n-last,1000);last=n;
+  if(document.hidden||!S.speed||S.over)return;
+  acc+=dt*S.speed;let g=0;while(acc>=1000&&g++<20){acc-=1000;tick()}},100);
+window.addEventListener('resize',draw);
+if(S.log.length===0)say('Ten wanderers settle by a river. Feed them, build, and learn.');
+render();
+})();
+</script>
