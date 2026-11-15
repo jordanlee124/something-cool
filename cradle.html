@@ -86,7 +86,11 @@ nav{display:flex;flex-direction:column;gap:6px;flex:none}
 .tabs,.speed{display:grid;gap:6px}
 .tabs{grid-template-columns:repeat(5,1fr)}
 .tabs button{font-size:13px}
-#world{width:100%;display:block;border-radius:8px;border:1px solid var(--line);margin:10px 0 8px}
+#mapwrap{height:340px;overflow:auto;border-radius:8px;border:1px solid var(--line);margin:8px 0;background:var(--sky);overscroll-behavior:contain}
+#world{display:block}
+.mctl{display:flex;gap:6px;align-items:center;margin-top:10px}
+.mctl .btn{min-height:36px;padding:6px 12px}
+.mctl span{font-size:11px;color:var(--muted);margin-left:auto}
 .mstats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
 .mstats div{background:var(--bg);border-radius:8px;padding:6px 8px;font-size:11px;color:var(--muted)}
 .mstats b{display:block;font:700 16px var(--font-d);color:var(--fg);font-variant-numeric:tabular-nums}
@@ -111,7 +115,7 @@ nav{display:flex;flex-direction:column;gap:6px;flex:none}
     <section class="panel on" id="p-folk"></section>
     <section class="panel" id="p-build"></section>
     <section class="panel" id="p-tech"></section>
-    <section class="panel" id="p-map"><canvas id="world" aria-label="World map"></canvas><div class="mstats" id="mstats"></div><div class="legend"><span><i style="background:var(--accent)"></i>Your lands</span><span><i style="background:var(--line)"></i>Unexplored</span><span><i style="background:var(--water)"></i>Sea</span><span><i style="background:var(--forest)"></i>Forest</span><span><i style="background:var(--mount)"></i>Mountain</span></div></section>
+    <section class="panel" id="p-map"><div class="mctl"><button class="btn ghost" id="zout" aria-label="Zoom out">−</button><button class="btn ghost" id="zin" aria-label="Zoom in">+</button><button class="btn ghost" id="zc">Find Cradle</button><span>Drag to look around</span></div><div id="mapwrap"><canvas id="world" aria-label="Isometric world map"></canvas></div><div class="mstats" id="mstats"></div><div class="legend"><span><i style="background:var(--accent)"></i>Your lands</span><span><i style="background:var(--line)"></i>Unexplored</span><span><i style="background:var(--water)"></i>Sea</span><span><i style="background:var(--forest)"></i>Forest</span><span><i style="background:var(--mount)"></i>Mountain</span></div></section>
     <section class="panel" id="p-log"></section>
   </main>
   <nav>
@@ -226,7 +230,7 @@ function event(){
 const TABS=[['folk','Folk'],['build','Build'],['tech','Tech'],['map','Map'],['log','Log']];
 const tabs=$('#tabs');
 TABS.forEach(([id,name],i)=>{const b=el('button','',name);b.setAttribute('role','tab');b.setAttribute('aria-selected',i===0);
-  b.onclick=()=>{mapOn=id==='map';TABS.forEach(([x],j)=>{$('#p-'+x).classList.toggle('on',x===id);tabs.children[j].setAttribute('aria-selected',x===id)});if(mapOn)drawMap()};tabs.appendChild(b)});
+  b.onclick=()=>{mapOn=id==='map';TABS.forEach(([x],j)=>{$('#p-'+x).classList.toggle('on',x===id);tabs.children[j].setAttribute('aria-selected',x===id)});if(mapOn){mapCenter=true;drawMap()}};tabs.appendChild(b)});
 
 const speedEl=$('#speed');
 [[0,'Pause'],[1,'1×'],[3,'3×'],[10,'10×']].forEach(([v,l])=>{const b=el('button','',l);b.dataset.v=v;
@@ -404,42 +408,80 @@ function expand(){
   if(nc>S.claimed){const before=citiesAt(S.claimed);S.claimed=nc;const now=citiesAt(nc);
     if(now>before)say('Your people found a new city: '+CITY_NAMES[now-1]+'.','good')}}
 function vision(){return 3+Math.sqrt(S.claimed)*1.5+Object.keys(S.t).length*.9}
+let mapZoom=2.2,mapCenter=true;
+const h2r=h=>{h=h.trim().replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');return[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
+const rgbs=a=>'rgb('+a.map(v=>Math.round(Math.max(0,Math.min(255,v)))).join(',')+')';
+const shade=(h,f)=>rgbs(h2r(h).map(v=>v*f));
+const mix=(a,b,t)=>{const x=h2r(a),y=h2r(b);return rgbs(x.map((v,i)=>v+(y[i]-v)*t))};
 function drawMap(){
-  const M=getMap(),cv=$('#world');if(!M||!cv)return;
-  const w=cv.clientWidth;if(!w)return;const dpr=Math.min(2,window.devicePixelRatio||1),tile=w/MW,h=tile*MH;
-  cv.style.height=h+'px';if(cv.width!==Math.round(w*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
-  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);
-  const sx=M.st%MW,sy=(M.st/MW)|0,R=vision(),own=i=>M.pos[i]>=0&&M.pos[i]<S.claimed;
-  const seen=i=>{if(own(i))return true;const x=i%MW,y=(i/MW)|0;return Math.hypot(x-sx,y-sy)<=R};
+  const M=getMap(),cv=$('#world'),wrap=$('#mapwrap');if(!M||!cv)return;
+  const bw=wrap.clientWidth;if(!bw)return;
+  const C={};['--ground','--water','--line','--hills','--mount','--forest','--wood','--accent','--fg','--surface','--hut','--roof','--stone'].forEach(k=>C[k]=css(k));
+  const dpr=Math.min(2,window.devicePixelRatio||1),tw=bw*mapZoom/MW,th=tw/2,u=tw/9,maxH=9*u,mg=tw*1.4;
+  const W=Math.round(bw*mapZoom),Hc=Math.round((MW+MH-2)*th/2+th+maxH+mg*1.4);
+  cv.style.width=W+'px';cv.style.height=Hc+'px';
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(Hc*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(Hc*dpr)}
+  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,Hc);g.lineJoin='round';
+  const ox=MH*tw/2,oy=maxH+mg*.7,HT=[0,2*u,2*u,4*u,6*u];
+  const P=(X,Y,h)=>[(X-Y)*tw/2+ox,(X+Y)*th/2+oy-h];
+  const sx0=M.st%MW,sy0=(M.st/MW)|0,R=vision(),own=i=>M.pos[i]>=0&&M.pos[i]<S.claimed;
+  const seen=i=>{if(own(i))return true;const x=i%MW,y=(i/MW)|0;return Math.hypot(x-sx0,y-sy0)<=R};
+  const poly=(pts,fill)=>{g.beginPath();pts.forEach((q,k)=>k?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]));g.closePath();g.fillStyle=fill;g.fill();g.strokeStyle=fill;g.lineWidth=.6;g.stroke()};
   let exp=0;
-  for(let i=0;i<MW*MH;i++){const x=(i%MW)*tile,y=((i/MW)|0)*tile,t=M.T[i];
-    if(!seen(i)){g.fillStyle=css('--line');g.fillRect(x,y,tile+.5,tile+.5);continue}
-    if(t)exp++;
-    g.fillStyle=css(t?'--ground':'--water');g.fillRect(x,y,tile+.5,tile+.5);
-    const cx=x+tile/2,cy=y+tile/2,j=M.glyph[i];
-    if(t===2){g.fillStyle=css('--forest');g.beginPath();g.arc(cx+(j-.5)*tile*.3,cy,tile*.3,0,6.3);g.fill()}
-    if(t===3){g.fillStyle=css('--hills');g.beginPath();g.arc(cx,cy+tile*.2,tile*.34,Math.PI,0);g.fill()}
-    if(t===4){g.fillStyle=css('--mount');g.beginPath();g.moveTo(cx-tile*.4,cy+tile*.35);g.lineTo(cx,cy-tile*.4);g.lineTo(cx+tile*.4,cy+tile*.35);g.fill()}
-    if(own(i)){g.globalAlpha=.32;g.fillStyle=css('--accent');g.fillRect(x,y,tile+.5,tile+.5);g.globalAlpha=1}}
-  /* borders */
-  g.strokeStyle=css('--accent');g.lineWidth=1.6;g.beginPath();
-  for(let i=0;i<MW*MH;i++){if(!own(i))continue;const X=i%MW,Y=(i/MW)|0,x=X*tile,y=Y*tile;
-    const o=(a,b)=>{const nx=X+a,ny=Y+b;return nx<0||ny<0||nx>=MW||ny>=MH||!own(ny*MW+nx)};
-    if(o(0,-1)){g.moveTo(x,y);g.lineTo(x+tile,y)}if(o(0,1)){g.moveTo(x,y+tile);g.lineTo(x+tile,y+tile)}
-    if(o(-1,0)){g.moveTo(x,y);g.lineTo(x,y+tile)}if(o(1,0)){g.moveTo(x+tile,y);g.lineTo(x+tile,y+tile)}}
-  g.stroke();
-  /* roads and cities */
-  const cc=i=>[(i%MW+.5)*tile,((i/MW|0)+.5)*tile],n=citiesAt(S.claimed),pts=[];
-  for(let k=0;k<n;k++){const idx=CITY_AT[k];if(idx<M.order.length)pts.push(M.order[idx])}
-  g.strokeStyle=css('--wood');g.lineWidth=1.4;g.setLineDash([3,2]);g.beginPath();
-  pts.slice(1).forEach(p=>{const[a,b]=cc(pts[0]),[c,d]=cc(p);g.moveTo(a,b);g.lineTo(c,d)});g.stroke();g.setLineDash([]);
-  g.font='600 10px Inter,system-ui,sans-serif';g.textBaseline='middle';
-  pts.forEach((p,k)=>{const[x,y]=cc(p),r=tile*(k===0?.5:.38);
-    g.fillStyle=css('--fg');g.fillRect(x-r,y-r,r*2,r*2);g.strokeStyle=css('--accent');g.lineWidth=2;g.strokeRect(x-r,y-r,r*2,r*2);
-    const nm=CITY_NAMES[k],tw=g.measureText(nm).width,lx=Math.max(2,Math.min(w-tw-2,x-tw/2)),ly=y-r-7;
-    g.lineWidth=3;g.strokeStyle=css('--surface');g.strokeText(nm,lx,ly);g.fillStyle=css('--fg');g.fillText(nm,lx,ly)});
+  for(let d=0;d<=MW+MH-2;d++)for(let X=Math.max(0,d-MH+1);X<=Math.min(MW-1,d);X++){
+    const Y=d-X,i=Y*MW+X,t=M.T[i],o=own(i);
+    const flat=(col)=>{const[cx,cy]=P(X,Y,0);poly([[cx,cy],[cx+tw/2,cy+th/2],[cx,cy+th],[cx-tw/2,cy+th/2]],col)};
+    if(!seen(i)){flat(C['--line']);continue}
+    if(!t){flat(C['--water']);continue}
+    exp++;
+    const h=HT[t],[cx,cy]=P(X,Y,h);
+    let base=t===3?C['--hills']:t===4?C['--mount']:C['--ground'];
+    if(o)base=mix(base,C['--accent'],.4);
+    const baseHex=t===3?C['--hills']:t===4?C['--mount']:C['--ground'];
+    const L=[cx-tw/2,cy+th/2],Rr=[cx+tw/2,cy+th/2],B=[cx,cy+th],T=[cx,cy];
+    poly([L,B,[B[0],B[1]+h],[L[0],L[1]+h]],o?mix(shade(baseHex,.8),C['--accent'],.4):shade(baseHex,.8));
+    poly([B,Rr,[Rr[0],Rr[1]+h],[B[0],B[1]+h]],o?mix(shade(baseHex,.6),C['--accent'],.4):shade(baseHex,.6));
+    poly([T,Rr,B,L],base);
+    const mx=cx,my=cy+th/2,j=M.glyph[i];
+    if(t===4){const ap=[mx,my-5*u];
+      poly([T,L,ap],shade(C['--mount'],1.1));poly([T,Rr,ap],shade(C['--mount'],.95));
+      poly([L,B,ap],shade(C['--mount'],.8));poly([B,Rr,ap],shade(C['--mount'],.6));
+      poly([[mx-tw*.07,my-3.6*u],[mx,my-5*u],[mx+tw*.07,my-3.6*u]],'#f4f6f7')}
+    if(t===2){const n=j>.5?2:1;for(let k=0;k<n;k++){const tx=mx+(n===2?(k?1:-1)*tw*.17:0),ty=my+(k?th*.1:-th*.05);
+      g.fillStyle=C['--wood'];g.fillRect(tx-tw*.02,ty-u*.5,tw*.04,u*.9);
+      poly([[tx,ty-u*4.6],[tx+tw*.14,ty-u*.4],[tx-tw*.14,ty-u*.4]],C['--forest'])}}
+    if(o){g.strokeStyle=C['--accent'];g.lineWidth=Math.max(1.4,tw*.06);g.lineCap='round';g.beginPath();
+      const no=(a,b)=>{const nx=X+a,ny=Y+b;return nx<0||ny<0||nx>=MW||ny>=MH||!own(ny*MW+nx)};
+      if(no(0,-1)){g.moveTo(T[0],T[1]);g.lineTo(Rr[0],Rr[1])}
+      if(no(1,0)){g.moveTo(Rr[0],Rr[1]);g.lineTo(B[0],B[1])}
+      if(no(0,1)){g.moveTo(B[0],B[1]);g.lineTo(L[0],L[1])}
+      if(no(-1,0)){g.moveTo(L[0],L[1]);g.lineTo(T[0],T[1])}
+      g.stroke()}
+  }
+  /* cities and roads */
+  const n=citiesAt(S.claimed),pts=[];
+  for(let k=0;k<n;k++){const idx=CITY_AT[k];if(idx<M.order.length){const c=M.order[idx],X=c%MW,Y=(c/MW)|0,[cx,cy]=P(X,Y,HT[M.T[c]]);pts.push([cx,cy+th/2,k])}}
+  g.strokeStyle=C['--wood'];g.lineWidth=Math.max(1.5,tw*.07);g.setLineDash([tw*.18,tw*.12]);g.beginPath();
+  pts.slice(1).forEach(q=>{g.moveTo(pts[0][0],pts[0][1]);g.lineTo(q[0],q[1])});g.stroke();g.setLineDash([]);
+  const box=(cx,cy,sz,bh,top,lf,rt)=>{
+    poly([[cx-sz,cy],[cx,cy+sz/2],[cx,cy+sz/2-bh],[cx-sz,cy-bh]],lf);
+    poly([[cx,cy+sz/2],[cx+sz,cy],[cx+sz,cy-bh],[cx,cy+sz/2-bh]],rt);
+    poly([[cx-sz,cy-bh],[cx,cy-sz/2-bh],[cx+sz,cy-bh],[cx,cy+sz/2-bh]],top)};
+  g.font='700 '+Math.max(10,tw*.42)+'px Inter,system-ui,sans-serif';g.textBaseline='alphabetic';g.textAlign='center';
+  pts.forEach(([cx,cy,k])=>{
+    const sz=tw*(k===0?.3:.22),bh=tw*(k===0?.5:.3);
+    box(cx,cy,sz,bh,C['--roof'],shade(C['--hut'],1.1),shade(C['--hut'],.8));
+    if(k===0){box(cx+tw*.34,cy+tw*.08,tw*.14,tw*.2,C['--roof'],shade(C['--hut'],1.1),shade(C['--hut'],.8));
+      g.strokeStyle=C['--fg'];g.lineWidth=1.5;g.beginPath();g.moveTo(cx,cy-bh-sz/2);g.lineTo(cx,cy-bh-sz/2-tw*.5);g.stroke();
+      poly([[cx,cy-bh-sz/2-tw*.5],[cx+tw*.28,cy-bh-sz/2-tw*.4],[cx,cy-bh-sz/2-tw*.3]],C['--accent'])}
+    const nm=CITY_NAMES[k],ly=cy-bh-sz/2-(k===0?tw*.62:tw*.14);
+    g.lineWidth=3;g.strokeStyle=C['--surface'];g.strokeText(nm,cx,ly);g.fillStyle=C['--fg'];g.fillText(nm,cx,ly)});
+  g.textAlign='start';
+  if(mapCenter&&pts.length){mapCenter=false;wrap.scrollLeft=pts[0][0]-bw/2;wrap.scrollTop=pts[0][1]-wrap.clientHeight/2}
   const pct=v=>Math.round(v/M.nLand*100)+'%';
   $('#mstats').innerHTML='<div><b>'+S.claimed+'</b>tiles held</div><div><b>'+n+'</b>cities</div><div><b>'+pct(exp)+'</b>explored</div>'}
+function zoom(f){mapZoom=Math.max(1,Math.min(3.6,mapZoom*f));mapCenter=true;drawMap()}
+$('#zin').onclick=()=>zoom(1.25);$('#zout').onclick=()=>zoom(.8);$('#zc').onclick=()=>{mapCenter=true;drawMap()};
 
 /* ---------- loop ---------- */
 let last=performance.now(),acc=0;
