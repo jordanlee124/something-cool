@@ -1,0 +1,1063 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#141010">
+<title>Emberwright</title>
+<style>
+:root {
+  --bg: #f4efe8; --panel: #fffaf3; --ink: #2a211b; --muted: #7a6a5c; --line: #e2d6c6;
+  --accent: #c2410c; --accent-ink: #ffffff; --good: #3f7d3a; --bad: #b42318; --chip: #efe6da; --chip-off: #e7ddd0;
+  --shadow: 0 1px 2px rgba(60,30,10,.08), 0 4px 14px rgba(60,30,10,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141010; --panel: #1d1716; --ink: #f1e6da; --muted: #a8968a; --line: #33292a;
+    --accent: #f97316; --accent-ink: #1a0f08; --good: #7bc46f; --bad: #ff6b5b; --chip: #2a2120; --chip-off: #221b1a;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141010; --panel: #1d1716; --ink: #f1e6da; --muted: #a8968a; --line: #33292a;
+  --accent: #f97316; --accent-ink: #1a0f08; --good: #7bc46f; --bad: #ff6b5b; --chip: #2a2120; --chip-off: #221b1a;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.25);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body {
+  font: 15px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
+  padding: env(safe-area-inset-top) 0 calc(env(safe-area-inset-bottom) + 24px);
+}
+.wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
+header { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 0 6px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
+h1 span { color: var(--accent); }
+.clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.res { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.res .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; box-shadow: var(--shadow); }
+.res .lab { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.res .val { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.res .rate { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.rate.neg { color: var(--bad); }
+.goal { margin: 10px 0 8px; font-size: 14px; color: var(--muted); min-height: 2.8em; }
+.goal b { color: var(--ink); }
+.board { position: relative; }
+canvas#grid { display: block; width: 100%; aspect-ratio: 1; border-radius: 12px; touch-action: manipulation; background: #0c0a09; }
+.legend { display: flex; align-items: center; gap: 8px; margin: 6px 0 0; font-size: 11px; color: var(--muted); }
+.legend .bar { flex: 1; height: 8px; border-radius: 4px; position: relative; }
+.legend .tick { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--ink); opacity: .6; }
+.row { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+button {
+  font: inherit; color: inherit; background: var(--chip); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 12px; cursor: pointer; touch-action: manipulation;
+}
+button:active { transform: translateY(1px); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+button:disabled, button.off { opacity: .45; }
+button.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.big { flex: 1; padding: 12px; font-weight: 600; }
+.charge { height: 6px; background: var(--chip-off); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.charge i { display: block; height: 100%; background: var(--accent); width: 0; }
+.palette { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.palette button { text-align: left; padding: 6px 8px; font-size: 13px; line-height: 1.25; }
+.palette button small { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; box-shadow: var(--shadow); }
+.card h3 { margin: 0 0 4px; font-size: 15px; }
+.card p { margin: 4px 0; color: var(--muted); font-size: 13px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+.tabs { display: flex; gap: 4px; margin-top: 14px; border-bottom: 1px solid var(--line); }
+.tabs button { background: none; border: none; border-radius: 0; border-bottom: 2px solid transparent; padding: 8px 10px; color: var(--muted); }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.up { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.up:last-child { border-bottom: none; }
+.up .txt { flex: 1; }
+.up .txt b { display: block; font-size: 14px; }
+.up .txt span { font-size: 13px; color: var(--muted); }
+.up button { white-space: nowrap; font-variant-numeric: tabular-nums; min-width: 92px; }
+.done-list { font-size: 13px; color: var(--muted); }
+#toasts { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 12px); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; z-index: 20; }
+.toast { pointer-events: auto; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 10px; padding: 8px 12px; font-size: 13px; max-width: 92vw; animation: up .2s ease-out; }
+.toast.bad { border-color: var(--bad); }
+.toast.good { border-color: var(--accent); }
+@keyframes up { from { transform: translateY(8px); opacity: 0; } }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 30; padding: 16px; }
+.modal.show { display: flex; }
+.modal .card { max-width: 420px; width: 100%; }
+textarea { width: 100%; height: 90px; font: 12px ui-monospace, monospace; background: var(--chip-off); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; -webkit-user-select: text; user-select: text; }
+.muted { color: var(--muted); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Ember<span>wright</span></h1><div class="clock" id="clock">0:00</div></header>
+  <div class="res">
+    <div class="box"><div class="lab">Embers</div><div class="val" id="vEmbers">0</div><div class="rate" id="rEmbers">+0/s</div></div>
+    <div class="box"><div class="lab">Wood</div><div class="val" id="vWood">0</div><div class="rate" id="rWood">+0/s</div></div>
+  </div>
+  <div class="goal" id="goal"></div>
+  <div class="board"><canvas id="grid" width="600" height="600" aria-label="Forge floor"></canvas></div>
+  <div class="legend"><span>20°</span><div class="bar" id="legendBar"></div><span>1200°+</span></div>
+  <div class="row">
+    <button class="big" id="btnGather">Gather kindling <span class="muted">+1 wood</span></button>
+    <button class="big hidden" id="btnPump">Pump bellows<div class="charge"><i id="chargeBar"></i></div></button>
+  </div>
+  <div class="row" style="margin-top:0">
+    <button id="ovHeat" class="sel">Heat</button>
+    <button id="ovEff">Efficiency</button>
+    <span class="muted" style="align-self:center;font-size:12px" id="armHint"></span>
+  </div>
+  <div class="palette" id="palette"></div>
+  <div class="card" id="info"></div>
+  <div class="tabs" id="tabs">
+    <button data-tab="upgrades" class="on">Upgrades</button>
+    <button data-tab="stats">Stats</button>
+    <button data-tab="settings">Settings</button>
+  </div>
+  <div id="tab-upgrades"></div>
+  <div id="tab-stats" class="hidden"></div>
+  <div id="tab-settings" class="hidden">
+    <div class="card">
+      <h3>Numbers</h3>
+      <div class="row"><button id="fmtShort" class="sel">1.23M</button><button id="fmtSci">1.23e6</button></div>
+      <h3>Theme</h3>
+      <div class="row"><button data-theme-set="">Auto</button><button data-theme-set="dark">Dark</button><button data-theme-set="light">Light</button></div>
+    </div>
+    <div class="card">
+      <h3>Save</h3>
+      <p>Progress saves to this browser every 10 seconds. Copy the code to move it somewhere else.</p>
+      <div class="row"><button id="btnExport">Export</button><button id="btnImport">Import</button><button id="btnSave">Save now</button></div>
+      <textarea id="saveText" placeholder="Save code"></textarea>
+    </div>
+    <div class="card">
+      <h3>Start over</h3>
+      <p>Wipes this save. There is no undo.</p>
+      <button id="btnReset">Hard reset</button>
+    </div>
+  </div>
+</div>
+<div id="toasts"></div>
+<div class="modal" id="modal"><div class="card" id="modalBody"></div></div>
+
+<script>
+// ==SIM-BEGIN==
+// The simulation: plain data in, plain data out. No DOM. balance.js runs this same code under Node.
+const Sim = (() => {
+  'use strict';
+  const N = 12, DT = 0.25, AMB = 20, DIFF = 0.2, LOSS = 0.02, VERSION = 1;
+
+  const B = {
+    pit:     { name: 'Ember pit',  cost: { embers: 15 },            growth: 1.30, maxT: 900,  cond: 1,    ideal: 520, width: 240, rate: 1, levels: 12,
+               desc: 'Makes embers. Best near 520°, falls off either side, and may crack above 900°.' },
+    hearth:  { name: 'Hearth',     cost: { wood: 12 },              growth: 1.32, maxT: 1400, cond: 1,    emit: 420, burn: 0.5, levels: 12,
+               desc: 'Burns wood to heat its tile. Heat spreads to the tiles around it.' },
+    lodge:   { name: 'Woodcutter', cost: { embers: 10 },            growth: 1.30, maxT: 450,  cond: 1,    rate: 0.8, cool: 120, levels: 12,
+               desc: 'Cuts wood. Works slower above 120° and may crack above 450°.' },
+    kiln:    { name: 'Charcoal kiln', cost: { embers: 400, wood: 250 }, growth: 1.35, maxT: 800, cond: 1, ideal: 380, width: 140, burn: 1.5, rate: 0.6, emit: 70, unlock: 'charcoal', levels: 8,
+               desc: 'Burns wood into embers and gives off some heat. Best near 380°; it burns its wood whatever the temperature.' },
+    bellows: { name: 'Bellows',    cost: { embers: 250, wood: 60 }, growth: 1.60, maxT: 950,  cond: 1,    boost: 1.0, unlock: 'bellows', levels: 1,
+               desc: 'While pumped, adds up to +100% heat to every hearth next to it.' },
+    wall:    { name: 'Firebrick',  cost: { embers: 60, wood: 20 },  growth: 1.18, maxT: 2400, cond: 0.06, unlock: 'firebrick', levels: 1,
+               desc: 'Barely conducts heat. Use it to shield the cool side of the forge.' },
+    vent:    { name: 'Flue vent',  cost: { embers: 120, wood: 30 }, growth: 1.35, maxT: 1800, cond: 1,    cool: 0.35, unlock: 'vents', levels: 6,
+               desc: 'Draws heat out of its tile, and so out of the tiles around it.' },
+  };
+  const ORDER = ['pit', 'hearth', 'lodge', 'kiln', 'bellows', 'wall', 'vent'];
+
+  // Upgrades. `req` must be bought first. Each one is shown once total embers reach a quarter of its ember cost.
+  const U = [
+    { id: 'axes',       name: 'Sharpened axes',   cost: { embers: 40 },                 desc: 'Woodcutters ×2.' },
+    { id: 'clay',       name: 'Clay-lined pits',  cost: { embers: 120 },                desc: 'Ember pits ×2.' },
+    { id: 'bellows',    name: 'Bellows',          cost: { embers: 300 },                desc: 'Unlocks bellows. Pump them by hand to boost nearby hearths.' },
+    { id: 'seasoned',   name: 'Seasoned wood',    cost: { embers: 700, wood: 150 },     desc: 'Hearths burn 35% less wood.' },
+    { id: 'firebrick',  name: 'Firebrick',        cost: { embers: 900 },                desc: 'Unlocks firebrick walls, which block heat.' },
+    { id: 'vents',      name: 'Flue vents',       cost: { embers: 1800 },               desc: 'Unlocks vents, which pull heat out of the floor.' },
+    { id: 'fireclay',   name: 'Fireclay',         cost: { embers: 3500 },               desc: 'Pits and woodcutters withstand 150° more before cracking.' },
+    { id: 'tongs',      name: 'Tempered tongs',   cost: { embers: 7000 },  req: 'clay', desc: 'Ember pits ×3.' },
+    { id: 'charcoal',   name: 'Charcoal kilns',   cost: { embers: 5000 },  req: 'axes', desc: 'Unlocks kilns, which turn spare wood into embers.' },
+    { id: 'waterwheel', name: 'Waterwheel',       cost: { embers: 16000, wood: 2000 }, req: 'bellows', desc: 'Bellows never fall below half charge, even when you stop pumping.' },
+    { id: 'mending',    name: 'Mending crew',     cost: { embers: 30000 },              desc: 'Cracked buildings repair themselves after 20 seconds.' },
+    { id: 'deep',       name: 'Deep pits',        cost: { embers: 50000 }, req: 'tongs', desc: 'The ember pit sweet spot is 50% wider.' },
+    { id: 'hotblast',   name: 'Hot blast',        cost: { embers: 90000, wood: 8000 }, req: 'waterwheel', desc: 'Hearths give 50% more heat.' },
+    { id: 'bloom',      name: 'Ember bloom',      cost: { embers: 220000 }, req: 'deep', desc: 'Ember pits ×4.' },
+    { id: 'forge',      name: 'Kindle the Forge', cost: { embers: 1000000, wood: 20000 }, req: 'bloom', goal: true,
+      desc: 'Light the great forge. This is the end of milestone 1.' },
+  ];
+  const UMAP = Object.fromEntries(U.map(u => [u.id, u]));
+  const EXPAND = [400, 4000, 40000, 250000];
+
+  // Neighbour table: -1 means off the edge of the grid.
+  const NB = [];
+  for (let i = 0; i < N * N; i++) {
+    const x = i % N, y = (i / N) | 0;
+    NB.push([x > 0 ? i - 1 : -1, x < N - 1 ? i + 1 : -1, y > 0 ? i - N : -1, y < N - 1 ? i + N : -1]);
+  }
+  const TMP = new Float64Array(N * N);
+  const MASK = new Uint8Array(N * N);
+  let maskRing = -1;
+  function bounds(ring) { const h = 2 + ring; return [6 - h, 6 + h - 1]; }
+  function mask(ring) {
+    if (ring !== maskRing) {
+      const [a, b] = bounds(ring);
+      for (let i = 0; i < N * N; i++) { const x = i % N, y = (i / N) | 0; MASK[i] = x >= a && x <= b && y >= a && y <= b ? 1 : 0; }
+      maskRing = ring;
+    }
+    return MASK;
+  }
+  const idx = (x, y) => y * N + x;
+  const unlocked = (s, i) => mask(s.ring)[i] === 1;
+
+  function rand(s) { // mulberry32, seeded and saved so bot runs replay exactly
+    let t = (s.seed = (s.seed + 0x6D2B79F5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  function place(s, i, t) { s.cells[i].b = { t, l: 1, th: 1, cr: 0 }; }
+
+  function newState(seed) {
+    const s = {
+      v: VERSION, seed: (seed ?? Math.floor(Math.random() * 2 ** 31)) | 0, t: 0,
+      embers: 10, wood: 15, totalEmbers: 0, totalWood: 0, ring: 0, cells: [], up: {}, charge: 0, fuel: 1, kfuel: 1,
+      rate: { embers: 0, wood: 0 }, prod: { embers: 0, wood: 0, burn: 0 },
+      stats: { cracks: 0, hottest: AMB, taps: 0, pumps: 0 }, ms: {}, done: false, events: [], _msT: 0,
+    };
+    for (let i = 0; i < N * N; i++) s.cells.push({ T: AMB, b: null });
+    place(s, idx(5, 5), 'hearth');
+    place(s, idx(6, 5), 'pit');
+    return s;
+  }
+
+  const count = (s, t) => { let c = 0; for (const cell of s.cells) if (cell.b && cell.b.t === t) c++; return c; };
+  const scale = (cost, f) => { const o = {}; for (const k in cost) o[k] = Math.ceil(cost[k] * f); return o; };
+  const buildCost = (s, t) => scale(B[t].cost, Math.pow(B[t].growth, count(s, t)));
+  const levelCost = (s, i) => { const b = s.cells[i].b; return scale(B[b.t].cost, 5 * Math.pow(2.6, b.l - 1)); };
+  const repairCost = (s, i) => { const b = s.cells[i].b; return scale(B[b.t].cost, 0.4 * b.l); };
+  const expandCost = s => s.ring < EXPAND.length ? { embers: EXPAND[s.ring] } : null;
+  const can = (s, c) => { for (const k in c) if ((s[k] || 0) < c[k]) return false; return true; };
+  const pay = (s, c) => { for (const k in c) s[k] -= c[k]; };
+  const buildable = (s, t) => !B[t].unlock || !!s.up[B[t].unlock];
+  const upVisible = (s, u) => !s.up[u.id] && (!u.req || s.up[u.req]) && s.totalEmbers >= (u.cost.embers || 0) * 0.25;
+
+  const maxT = (s, t) => B[t].maxT + (s.up.fireclay && (t === 'pit' || t === 'lodge') ? 150 : 0);
+  const pitMult = s => (s.up.clay ? 2 : 1) * (s.up.tongs ? 3 : 1) * (s.up.bloom ? 4 : 1);
+  const lodgeMult = s => (s.up.axes ? 2 : 1);
+  const pitWidth = s => B.pit.width * (s.up.deep ? 1.5 : 1);
+  const pitEff = (s, T) => { const d = (T - B.pit.ideal) / pitWidth(s); return Math.exp(-d * d); };
+  const kilnEff = (s, T) => { const d = (T - B.kiln.ideal) / B.kiln.width; return Math.exp(-d * d); };
+  const kilnBurn = b => B.kiln.burn * b.l * b.th;
+  const lodgeEff = (s, T) => T <= B.lodge.cool ? 1 : Math.max(0.1, 1 - (T - B.lodge.cool) / 300);
+  const lvlF = l => 1 + 0.6 * (l - 1);
+  const hearthHeat = (s, b) => B.hearth.emit * lvlF(b.l) * b.th * (s.up.hotblast ? 1.5 : 1);
+  const hearthBurn = (s, b) => B.hearth.burn * lvlF(b.l) * b.th * (s.up.seasoned ? 0.65 : 1);
+  const ventCool = b => B.vent.cool * (1 + 0.5 * (b.l - 1));
+  const cond = b => !b ? 1 : b.cr ? 0.3 : B[b.t].cond;
+
+  // How well the building on tile i is working right now, 0..1 (null for buildings with no output).
+  function efficiency(s, i) {
+    const c = s.cells[i], b = c.b;
+    if (!b) return null;
+    if (b.cr) return 0;
+    if (b.t === 'pit') return pitEff(s, c.T);
+    if (b.t === 'lodge') return lodgeEff(s, c.T);
+    if (b.t === 'hearth') return s.fuel * b.th;
+    if (b.t === 'kiln') return kilnEff(s, c.T) * s.kfuel * b.th;
+    return null;
+  }
+  function output(s, i) {
+    const c = s.cells[i], b = c.b;
+    if (!b || b.cr) return 0;
+    if (b.t === 'pit') return B.pit.rate * b.l * pitMult(s) * pitEff(s, c.T);
+    if (b.t === 'lodge') return B.lodge.rate * b.l * lodgeMult(s) * lodgeEff(s, c.T);
+    if (b.t === 'kiln') return B.kiln.rate * b.l * b.th * pitMult(s) * kilnEff(s, c.T) * s.kfuel;
+    return 0;
+  }
+  function bellowsMult(s, i) {
+    let m = 1;
+    for (const j of NB[i]) {
+      if (j < 0 || !unlocked(s, j)) continue;
+      const bb = s.cells[j].b;
+      if (bb && bb.t === 'bellows' && !bb.cr) m += B.bellows.boost * s.charge;
+    }
+    return m;
+  }
+
+  function crack(s, i) {
+    const c = s.cells[i];
+    c.b.cr = 1e-6;
+    s.stats.cracks++;
+    // A cracking building dumps half its stored heat into its neighbours, which can crack them in turn.
+    const dump = (c.T - AMB) * 0.5;
+    c.T -= dump;
+    for (const j of NB[i]) if (j >= 0 && unlocked(s, j)) s.cells[j].T += dump * 0.25;
+    s.events.push({ k: 'crack', i, t: c.b.t });
+  }
+
+  function step(s, dt = DT) {
+    const cells = s.cells, n = N * N, m = mask(s.ring);
+    s.t += dt;
+    s.charge = Math.max(s.up.waterwheel ? 0.5 : 0, s.charge - 0.04 * dt);
+
+    let demand = 0;
+    for (let i = 0; i < n; i++) { const b = cells[i].b; if (b && b.t === 'hearth' && !b.cr && m[i]) demand += hearthBurn(s, b) * dt; }
+    const fuel = demand > 0 ? Math.min(1, s.wood / demand) : 1;
+    s.wood = Math.max(0, s.wood - demand * fuel);
+    s.fuel = fuel;
+    // Kilns take what wood the hearths leave.
+    let kdemand = 0;
+    for (let i = 0; i < n; i++) { const b = cells[i].b; if (b && b.t === 'kiln' && !b.cr && m[i]) kdemand += kilnBurn(b) * dt; }
+    const kfuel = kdemand > 0 ? Math.min(1, s.wood / kdemand) : 1;
+    s.wood = Math.max(0, s.wood - kdemand * kfuel);
+    s.kfuel = kfuel;
+
+    // Heat: hearths emit, every tile loses heat to the air, and neighbours exchange heat by conduction.
+    // Locked tiles and the edge of the grid are held at ambient, so they act as a heat sink.
+    for (let i = 0; i < n; i++) {
+      if (!m[i]) { TMP[i] = AMB; continue; }
+      const c = cells[i], b = c.b, T = c.T;
+      let d = 0, loss = LOSS;
+      if (b && !b.cr) {
+        if (b.t === 'hearth') d += hearthHeat(s, b) * fuel * bellowsMult(s, i);
+        else if (b.t === 'kiln') d += B.kiln.emit * b.l * b.th * kfuel;
+        else if (b.t === 'vent') loss += ventCool(b);
+      }
+      d -= loss * (T - AMB);
+      const ci = cond(b);
+      const nb = NB[i];
+      for (let k = 0; k < 4; k++) {
+        const j = nb[k];
+        let Tj = AMB, cj = 1;
+        if (j >= 0 && m[j]) { Tj = cells[j].T; cj = cond(cells[j].b); }
+        d += DIFF * (ci < cj ? ci : cj) * (Tj - T);
+      }
+      const nt = T + d * dt;
+      TMP[i] = nt > AMB ? nt : AMB;
+    }
+
+    let pe = 0, pw = 0;
+    const pm = pitMult(s), lm = lodgeMult(s);
+    for (let i = 0; i < n; i++) {
+      const c = cells[i];
+      c.T = TMP[i];
+      const b = c.b;
+      if (!b || !m[i]) continue;
+      if (c.T > s.stats.hottest) s.stats.hottest = c.T;
+      if (b.cr) {
+        b.cr += dt;
+        if (s.up.mending && b.cr >= 20) b.cr = 0;
+        continue;
+      }
+      if (b.t === 'pit') pe += B.pit.rate * b.l * pm * pitEff(s, c.T);
+      else if (b.t === 'lodge') pw += B.lodge.rate * b.l * lm * lodgeEff(s, c.T);
+      else if (b.t === 'kiln') pe += B.kiln.rate * b.l * b.th * pm * kilnEff(s, c.T) * kfuel;
+      const mx = maxT(s, b.t);
+      if (c.T > mx) { const over = (c.T - mx) / 100 + 1; if (rand(s) < 0.012 * over * over * dt) crack(s, i); }
+    }
+    s.embers += pe * dt; s.totalEmbers += pe * dt;
+    s.wood += pw * dt; s.totalWood += pw * dt;
+    const burn = (demand * fuel + kdemand * kfuel) / dt;
+    s.prod.embers = pe; s.prod.wood = pw; s.prod.burn = burn;
+    const a = 1 - Math.exp(-dt / 2);
+    s.rate.embers += (pe - s.rate.embers) * a;
+    s.rate.wood += (pw - burn - s.rate.wood) * a;
+
+    if (s.t - s._msT >= 1) { s._msT = s.t; milestones(s); }
+  }
+
+  const MS = [
+    ['lodge', 'First woodcutter', s => count(s, 'lodge') > 0],
+    ['e100', '100 embers', s => s.totalEmbers >= 100],
+    ['e1k', '1,000 embers', s => s.totalEmbers >= 1e3],
+    ['e10k', '10,000 embers', s => s.totalEmbers >= 1e4],
+    ['e100k', '100,000 embers', s => s.totalEmbers >= 1e5],
+    ['e1m', '1,000,000 embers', s => s.totalEmbers >= 1e6],
+    ['bellows', 'Bellows', s => !!s.up.bellows],
+    ['crack', 'First crack', s => s.stats.cracks > 0],
+    ['ring1', 'Floor 6×6', s => s.ring >= 1],
+    ['ring2', 'Floor 8×8', s => s.ring >= 2],
+    ['ring3', 'Floor 10×10', s => s.ring >= 3],
+    ['ring4', 'Floor 12×12', s => s.ring >= 4],
+    ['forge', 'The Forge is kindled', s => !!s.up.forge],
+  ];
+  function milestones(s) {
+    for (const [id, name, f] of MS) if (!(id in s.ms) && f(s)) { s.ms[id] = s.t; s.events.push({ k: 'ms', id, name }); }
+  }
+
+  function act(s, a) {
+    switch (a.k) {
+      case 'gather': s.wood += 1; s.totalWood += 1; s.stats.taps++; return true;
+      case 'pump': if (!s.up.bellows) return false; s.charge = Math.min(1, s.charge + 0.1); s.stats.pumps++; return true;
+      case 'build': {
+        const { t, i } = a;
+        if (!B[t] || !buildable(s, t) || !unlocked(s, i) || s.cells[i].b) return false;
+        const c = buildCost(s, t); if (!can(s, c)) return false;
+        pay(s, c); place(s, i, t); return true;
+      }
+      case 'level': {
+        const b = s.cells[a.i].b;
+        if (!b || b.cr || b.l >= B[b.t].levels) return false;
+        const c = levelCost(s, a.i); if (!can(s, c)) return false;
+        pay(s, c); b.l++; return true;
+      }
+      case 'repair': {
+        const b = s.cells[a.i].b;
+        if (!b || !b.cr) return false;
+        const c = repairCost(s, a.i); if (!can(s, c)) return false;
+        pay(s, c); b.cr = 0; return true;
+      }
+      case 'throttle': {
+        const b = s.cells[a.i].b;
+        if (!b || (b.t !== 'hearth' && b.t !== 'kiln') || ![0, 0.5, 1].includes(a.v)) return false;
+        b.th = a.v; return true;
+      }
+      case 'demolish': if (!s.cells[a.i].b) return false; s.cells[a.i].b = null; return true;
+      case 'upgrade': {
+        const u = UMAP[a.id];
+        if (!u || !upVisible(s, u) || !can(s, u.cost)) return false;
+        pay(s, u.cost); s.up[u.id] = true;
+        if (u.goal) s.done = true;
+        milestones(s);
+        return true;
+      }
+      case 'expand': {
+        const c = expandCost(s); if (!c || !can(s, c)) return false;
+        pay(s, c); s.ring++; milestones(s); return true;
+      }
+    }
+    return false;
+  }
+
+  function advance(s, secs) { const k = Math.round(secs / DT); for (let i = 0; i < k; i++) step(s); }
+
+  // Offline progress. The first five minutes are simulated tick by tick (heat settles, things may crack).
+  // After that the measured rates are extrapolated, with a re-measure if the woodpile runs dry.
+  function fastForward(s, secs) {
+    secs = Math.min(Math.max(0, secs), 8 * 3600);
+    const e0 = s.embers, w0 = s.wood, c0 = s.stats.cracks;
+    const exact = Math.min(secs, 300);
+    advance(s, exact);
+    let rem = secs - exact;
+    if (rem > 0) {
+      const m1 = Math.min(rem, 60);
+      let ea = s.embers, wa = s.wood;
+      advance(s, m1); rem -= m1;
+      let er = (s.embers - ea) / m1, wr = (s.wood - wa) / m1;
+      if (rem > 0 && wr < 0 && s.wood + wr * rem < 0) {
+        const t0 = s.wood / -wr;
+        s.embers += er * t0; s.totalEmbers += er * t0; s.wood = 0; s.t += t0; rem -= t0;
+        const m2 = Math.min(rem, 120);
+        ea = s.embers; wa = s.wood;
+        advance(s, m2); rem -= m2;
+        er = m2 > 0 ? (s.embers - ea) / m2 : 0; wr = m2 > 0 ? (s.wood - wa) / m2 : 0;
+      }
+      if (rem > 0) {
+        s.embers += er * rem; s.totalEmbers += er * rem;
+        s.wood = Math.max(0, s.wood + wr * rem); if (wr > 0) s.totalWood += wr * rem;
+        s.t += rem;
+      }
+      milestones(s);
+    }
+    s.events = s.events.filter(e => e.k === 'ms');
+    return { secs, embers: s.embers - e0, wood: s.wood - w0, cracks: s.stats.cracks - c0 };
+  }
+
+  function serialize(s) {
+    const { events, ...rest } = s;
+    return JSON.stringify(rest);
+  }
+  function deserialize(str) {
+    const o = JSON.parse(str);
+    if (!o || typeof o !== 'object' || !Array.isArray(o.cells) || o.cells.length !== N * N) throw new Error('Not an Emberwright save');
+    const s = Object.assign(newState(o.seed), o);
+    s.events = [];
+    // Future versions migrate here: if (s.v < 2) { ... s.v = 2; }
+    s.v = VERSION;
+    return s;
+  }
+
+  return {
+    N, DT, AMB, VERSION, B, ORDER, U, UMAP, EXPAND, NB, MS,
+    newState, step, act, advance, fastForward, serialize, deserialize,
+    idx, unlocked, bounds, count, buildCost, levelCost, repairCost, expandCost, can, buildable, upVisible,
+    maxT, pitEff, lodgeEff, kilnEff, kilnBurn, pitMult, lodgeMult, pitWidth, efficiency, output, bellowsMult, hearthBurn, hearthHeat,
+  };
+})();
+if (typeof module !== 'undefined') module.exports = Sim;
+// ==SIM-END==
+</script>
+
+<script>
+'use strict';
+const SAVE_KEY = 'emberwright.save';
+const PREF_KEY = 'emberwright.prefs';
+const $ = q => document.querySelector(q);
+const N = Sim.N;
+
+// ---------- preferences (per browser, optional) ----------
+let prefs = { fmt: 'short', theme: '', tab: 'upgrades', ov: 'heat' };
+try { Object.assign(prefs, JSON.parse(localStorage.getItem(PREF_KEY) || '{}')); } catch (e) {}
+function savePrefs() { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch (e) {} }
+function applyTheme() { if (prefs.theme) document.documentElement.dataset.theme = prefs.theme; else delete document.documentElement.dataset.theme; }
+applyTheme();
+
+// ---------- formatting ----------
+const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+function fmt(n) {
+  if (!isFinite(n)) return '∞';
+  const a = Math.abs(n);
+  if (a < 10) return (Math.round(n * 10) / 10).toString();
+  if (a < 1000) return Math.floor(n).toString();
+  const e = Math.floor(Math.log10(a));
+  if (prefs.fmt === 'sci' || e >= SUF.length * 3) return (n / 10 ** e).toFixed(2) + 'e' + e;
+  const g = Math.floor(e / 3);
+  const v = n / 10 ** (g * 3);
+  return (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + SUF[g];
+}
+function fmtCost(c) { return Object.entries(c).map(([k, v]) => fmt(v) + (k === 'wood' ? ' wood' : '')).join(' + '); }
+function fmtTime(t) {
+  t = Math.floor(t);
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+function fmtDur(t) {
+  if (t < 90) return Math.round(t) + ' seconds';
+  if (t < 5400) return Math.round(t / 60) + ' minutes';
+  return (t / 3600).toFixed(1) + ' hours';
+}
+const tileName = i => `${String.fromCharCode(65 + (i % N))}${Math.floor(i / N) + 1}`;
+
+// ---------- state ----------
+let S;
+let offline = null;
+function load() {
+  let raw = null;
+  try { raw = localStorage.getItem(SAVE_KEY); } catch (e) {}
+  if (!raw) return Sim.newState();
+  try {
+    const o = JSON.parse(raw);
+    const s = Sim.deserialize(o.state);
+    const away = (Date.now() - (o.at || Date.now())) / 1000;
+    if (away > 30) offline = Sim.fastForward(s, away);
+    return s;
+  } catch (e) { console.warn('Save could not be read; starting fresh.', e); return Sim.newState(); }
+}
+function save() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ at: Date.now(), state: Sim.serialize(S) })); } catch (e) {}
+}
+S = load();
+
+let sel = -1;        // selected tile
+let armed = null;    // building type waiting to be placed
+
+// ---------- heat colours ----------
+const STOPS = [[20, [27, 21, 18]], [150, [58, 28, 18]], [300, [120, 36, 16]], [450, [186, 62, 18]], [600, [228, 104, 30]], [800, [246, 160, 52]], [1000, [255, 214, 110]], [1250, [255, 246, 214]]];
+function heatRGB(T) {
+  if (T <= STOPS[0][0]) return STOPS[0][1];
+  for (let k = 1; k < STOPS.length; k++) {
+    if (T <= STOPS[k][0]) {
+      const [t0, c0] = STOPS[k - 1], [t1, c1] = STOPS[k], f = (T - t0) / (t1 - t0);
+      return [c0[0] + (c1[0] - c0[0]) * f, c0[1] + (c1[1] - c0[1]) * f, c0[2] + (c1[2] - c0[2]) * f];
+    }
+  }
+  return STOPS[STOPS.length - 1][1];
+}
+const rgb = c => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+(function legend() {
+  const bar = $('#legendBar');
+  const stops = STOPS.map(([t, c]) => `${rgb(c)} ${((t - 20) / 1180 * 100).toFixed(1)}%`).join(',');
+  bar.style.background = `linear-gradient(90deg, ${stops})`;
+  for (const [t, label] of [[520, 'pit sweet spot'], [900, 'pits crack']]) {
+    const tk = document.createElement('i');
+    tk.className = 'tick'; tk.title = `${t}° ${label}`;
+    tk.style.left = ((t - 20) / 1180 * 100) + '%';
+    bar.appendChild(tk);
+  }
+})();
+
+// ---------- canvas ----------
+const cv = $('#grid');
+const ctx = cv.getContext('2d');
+function resize() {
+  const r = cv.getBoundingClientRect();
+  const d = Math.min(window.devicePixelRatio || 1, 2);
+  const px = Math.round(r.width * d);
+  if (cv.width !== px) { cv.width = px; cv.height = px; }
+}
+window.addEventListener('resize', resize);
+
+function drawIcon(b, x, y, ts, i, now) {
+  const cx = x + ts / 2, cy = y + ts / 2, r = ts * 0.36;
+  ctx.save();
+  ctx.lineWidth = Math.max(1, ts * 0.05);
+  switch (b.t) {
+    case 'hearth': {
+      ctx.fillStyle = '#3b3430'; ctx.strokeStyle = '#6b625b';
+      ctx.beginPath(); ctx.arc(cx, cy + r * 0.25, r * 0.95, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      const lit = !b.cr && b.th > 0 && S.fuel > 0.02;
+      if (lit) {
+        const f = (0.55 + 0.45 * b.th) * (0.92 + 0.08 * Math.sin(now / 90 + i));
+        const h = r * 1.5 * f;
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath(); ctx.moveTo(cx, cy + r * 0.6 - h); ctx.quadraticCurveTo(cx + r * 0.75, cy + r * 0.2, cx, cy + r * 0.7);
+        ctx.quadraticCurveTo(cx - r * 0.75, cy + r * 0.2, cx, cy + r * 0.6 - h); ctx.fill();
+        ctx.fillStyle = '#fde68a';
+        ctx.beginPath(); ctx.moveTo(cx, cy + r * 0.6 - h * 0.55); ctx.quadraticCurveTo(cx + r * 0.38, cy + r * 0.35, cx, cy + r * 0.7);
+        ctx.quadraticCurveTo(cx - r * 0.38, cy + r * 0.35, cx, cy + r * 0.6 - h * 0.55); ctx.fill();
+      } else {
+        ctx.fillStyle = '#1c1816'; ctx.beginPath(); ctx.arc(cx, cy + r * 0.25, r * 0.55, 0, Math.PI * 2); ctx.fill();
+      }
+      break;
+    }
+    case 'pit': {
+      const e = b.cr ? 0 : Sim.pitEff(S, S.cells[i].T);
+      ctx.fillStyle = '#2a1d17'; ctx.strokeStyle = '#5c4636';
+      ctx.beginPath(); ctx.ellipse(cx, cy + r * 0.15, r, r * 0.7, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      const g = ctx.createRadialGradient(cx, cy + r * 0.15, 0, cx, cy + r * 0.15, r * 0.75);
+      g.addColorStop(0, `rgba(255,${180 + 60 * e | 0},90,${0.25 + 0.75 * e})`);
+      g.addColorStop(1, 'rgba(120,30,10,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(cx, cy + r * 0.15, r * 0.8, r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'lodge': {
+      ctx.fillStyle = '#7a5232'; ctx.strokeStyle = '#3a2615';
+      ctx.fillRect(cx - r * 0.8, cy - r * 0.1, r * 1.6, r * 0.95); ctx.strokeRect(cx - r * 0.8, cy - r * 0.1, r * 1.6, r * 0.95);
+      ctx.fillStyle = '#3f6b2f';
+      ctx.beginPath(); ctx.moveTo(cx - r, cy - r * 0.05); ctx.lineTo(cx, cy - r * 0.95); ctx.lineTo(cx + r, cy - r * 0.05); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#2a1a0e'; ctx.fillRect(cx - r * 0.18, cy + r * 0.35, r * 0.36, r * 0.5);
+      break;
+    }
+    case 'kiln': {
+      const lit = !b.cr && b.th > 0 && S.kfuel > 0.02;
+      ctx.fillStyle = '#3a3532'; ctx.strokeStyle = '#151210';
+      ctx.beginPath(); ctx.moveTo(cx - r, cy + r * 0.7); ctx.quadraticCurveTo(cx - r, cy - r * 0.9, cx, cy - r * 0.9);
+      ctx.quadraticCurveTo(cx + r, cy - r * 0.9, cx + r, cy + r * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = lit ? `rgba(255,${150 + 80 * Sim.kilnEff(S, S.cells[i].T) | 0},60,.95)` : '#151210';
+      for (const dx of [-0.45, 0, 0.45]) ctx.fillRect(cx + dx * r - r * 0.09, cy - r * 0.05, r * 0.18, r * 0.5);
+      if (lit) {
+        ctx.strokeStyle = 'rgba(180,180,180,.35)';
+        const ph = (now / 700 + i * 0.31) % 1;
+        ctx.beginPath(); ctx.moveTo(cx, cy - r * (0.95 + ph * 0.6)); ctx.quadraticCurveTo(cx + r * 0.3, cy - r * (1.15 + ph * 0.6), cx, cy - r * (1.35 + ph * 0.6)); ctx.stroke();
+      }
+      break;
+    }
+    case 'bellows': {
+      const p = 0.75 + 0.25 * S.charge * (0.5 + 0.5 * Math.sin(now / 160));
+      ctx.fillStyle = '#8a5a3a'; ctx.strokeStyle = '#3a2615';
+      ctx.beginPath(); ctx.moveTo(cx - r, cy - r * 0.7 * p); ctx.lineTo(cx + r * 0.55, cy - r * 0.2); ctx.lineTo(cx + r * 0.55, cy + r * 0.2);
+      ctx.lineTo(cx - r, cy + r * 0.7 * p); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#6b625b'; ctx.fillRect(cx + r * 0.55, cy - r * 0.12, r * 0.45, r * 0.24);
+      break;
+    }
+    case 'wall': {
+      ctx.fillStyle = '#7c3f2c'; ctx.fillRect(x + 1, y + 1, ts - 2, ts - 2);
+      ctx.strokeStyle = 'rgba(30,14,10,.65)'; ctx.lineWidth = Math.max(1, ts * 0.04);
+      const rows = 4, h = (ts - 2) / rows;
+      for (let k = 0; k < rows; k++) {
+        const yy = y + 1 + k * h;
+        ctx.beginPath(); ctx.moveTo(x + 1, yy); ctx.lineTo(x + ts - 1, yy); ctx.stroke();
+        const off = k % 2 ? ts / 4 : ts / 2;
+        for (let xx = x + off; xx < x + ts - 1; xx += ts / 2) { ctx.beginPath(); ctx.moveTo(xx, yy); ctx.lineTo(xx, yy + h); ctx.stroke(); }
+      }
+      break;
+    }
+    case 'vent': {
+      ctx.fillStyle = '#2b2d31'; ctx.strokeStyle = '#8a8f98';
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2); ctx.strokeRect(cx - r, cy - r, r * 2, r * 2);
+      ctx.fillStyle = '#0d0e10';
+      for (let k = 0; k < 3; k++) ctx.fillRect(cx - r * 0.7, cy - r * 0.6 + k * r * 0.5, r * 1.4, r * 0.22);
+      ctx.strokeStyle = 'rgba(200,210,220,.35)';
+      const ph = (now / 600 + i * 0.37) % 1;
+      ctx.beginPath(); ctx.moveTo(cx - r * 0.3, cy - r * (0.9 + ph)); ctx.quadraticCurveTo(cx, cy - r * (1.2 + ph), cx + r * 0.3, cy - r * (0.9 + ph)); ctx.stroke();
+      break;
+    }
+  }
+  if (b.cr) {
+    ctx.strokeStyle = '#0a0605'; ctx.lineWidth = Math.max(1.5, ts * 0.07);
+    ctx.beginPath(); ctx.moveTo(x + ts * 0.2, y + ts * 0.15); ctx.lineTo(x + ts * 0.45, y + ts * 0.45); ctx.lineTo(x + ts * 0.35, y + ts * 0.55); ctx.lineTo(x + ts * 0.7, y + ts * 0.85); ctx.stroke();
+    ctx.fillStyle = 'rgba(180,20,10,.25)'; ctx.fillRect(x, y, ts, ts);
+  }
+  if (Sim.B[b.t].levels > 1 && b.l > 1) {
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    const label = 'L' + b.l;
+    ctx.font = `600 ${Math.round(ts * 0.22)}px system-ui, sans-serif`;
+    const w = ctx.measureText(label).width + ts * 0.1;
+    ctx.fillRect(x + 2, y + ts - ts * 0.28 - 2, w, ts * 0.28);
+    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + 2 + ts * 0.05, y + ts - ts * 0.14 - 2);
+  }
+  if ((b.t === 'hearth' || b.t === 'kiln') && b.th < 1 && !b.cr) {
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.font = `600 ${Math.round(ts * 0.2)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(b.th === 0 ? 'off' : '½', x + ts * 0.62, y + 3);
+  }
+  ctx.restore();
+}
+
+function draw(now) {
+  resize();
+  const W = cv.width, ts = W / N;
+  ctx.clearRect(0, 0, W, W);
+  const [a, bnd] = Sim.bounds(S.ring);
+  const [na, nb] = Sim.bounds(Math.min(S.ring + 1, 4));
+  for (let i = 0; i < N * N; i++) {
+    const x = (i % N) * ts, y = Math.floor(i / N) * ts, c = S.cells[i];
+    if (!Sim.unlocked(S, i)) {
+      const gx = i % N, gy = Math.floor(i / N);
+      const next = S.ring < 4 && gx >= na && gx <= nb && gy >= na && gy <= nb;
+      ctx.fillStyle = next ? '#1a1513' : '#0c0a09';
+      ctx.fillRect(x, y, ts, ts);
+      ctx.strokeStyle = next ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.025)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y + ts); ctx.lineTo(x + ts, y); ctx.stroke();
+      continue;
+    }
+    ctx.fillStyle = rgb(heatRGB(c.T));
+    ctx.fillRect(x, y, ts + 0.5, ts + 0.5);
+  }
+  // grid lines
+  ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let k = a; k <= bnd + 1; k++) {
+    ctx.moveTo(k * ts, a * ts); ctx.lineTo(k * ts, (bnd + 1) * ts);
+    ctx.moveTo(a * ts, k * ts); ctx.lineTo((bnd + 1) * ts, k * ts);
+  }
+  ctx.stroke();
+
+  for (let i = 0; i < N * N; i++) {
+    const c = S.cells[i];
+    if (!c.b || !Sim.unlocked(S, i)) continue;
+    const x = (i % N) * ts, y = Math.floor(i / N) * ts;
+    drawIcon(c.b, x, y, ts, i, now);
+    const over = !c.b.cr && c.T > Sim.maxT(S, c.b.t);
+    if (prefs.ov === 'eff') {
+      const e = Sim.efficiency(S, i);
+      if (e !== null) {
+        ctx.strokeStyle = e > 0.8 ? '#4ade80' : e > 0.45 ? '#facc15' : '#f87171';
+        ctx.lineWidth = Math.max(2, ts * 0.08);
+        ctx.strokeRect(x + ctx.lineWidth / 2, y + ctx.lineWidth / 2, ts - ctx.lineWidth, ts - ctx.lineWidth);
+      }
+    }
+    if (over && Math.floor(now / 300) % 2 === 0) {
+      ctx.strokeStyle = '#ff2d1a'; ctx.lineWidth = Math.max(2, ts * 0.09);
+      ctx.strokeRect(x + 2, y + 2, ts - 4, ts - 4);
+    }
+  }
+  if (armed) {
+    ctx.fillStyle = 'rgba(255,255,255,.08)';
+    for (let i = 0; i < N * N; i++) if (Sim.unlocked(S, i) && !S.cells[i].b) {
+      const x = (i % N) * ts, y = Math.floor(i / N) * ts;
+      ctx.fillRect(x + ts * 0.38, y + ts * 0.38, ts * 0.24, ts * 0.24);
+    }
+  }
+  if (sel >= 0) {
+    const x = (sel % N) * ts, y = Math.floor(sel / N) * ts;
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(2, ts * 0.06);
+    ctx.strokeRect(x + 1, y + 1, ts - 2, ts - 2);
+    const T = Math.round(S.cells[sel].T) + '°';
+    ctx.font = `700 ${Math.round(ts * 0.26)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'top';
+    const w = ctx.measureText(T).width + 8;
+    const tx = Math.min(W - w - 2, x + ts - w), ty = y > ts * 0.4 ? y - ts * 0.36 : y + ts + 2;
+    ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(tx, ty, w, ts * 0.34);
+    ctx.fillStyle = '#fff'; ctx.fillText(T, tx + 4, ty + ts * 0.04);
+  }
+}
+
+cv.addEventListener('click', ev => {
+  const r = cv.getBoundingClientRect();
+  const gx = Math.floor((ev.clientX - r.left) / r.width * N), gy = Math.floor((ev.clientY - r.top) / r.height * N);
+  if (gx < 0 || gy < 0 || gx >= N || gy >= N) return;
+  const i = gy * N + gx;
+  if (!Sim.unlocked(S, i)) { sel = -1; armed = null; toast('That ground is still rock. Expand the floor in Upgrades.'); refresh(true); return; }
+  if (armed && !S.cells[i].b) {
+    if (Sim.act(S, { k: 'build', t: armed, i })) {
+      sel = i;
+      if (!Sim.can(S, Sim.buildCost(S, armed))) armed = null;
+    } else toast('Not enough to build that yet.');
+  } else {
+    sel = sel === i ? -1 : i;
+    armed = null;
+  }
+  refresh(true);
+});
+
+// ---------- UI panels ----------
+const cache = new Map();
+function setHTML(el, html) { if (cache.get(el) !== html) { cache.set(el, html); el.innerHTML = html; } }
+
+function goalText() {
+  const s = S;
+  if (s.done) return '<b>The Forge is kindled.</b> Milestone 1 is complete; the next layer (materials and alloys) arrives in M2.';
+  if (!Sim.count(s, 'lodge')) return 'Your hearth is burning its last wood. <b>Build a Woodcutter</b> on a cool tile, away from the fire.';
+  if (!s.up.axes) return 'Embers come from the pit beside the hearth. Buy <b>Sharpened axes</b> below.';
+  if (Sim.count(s, 'pit') < 3) return 'Tap a tile to read its temperature. <b>Ember pits</b> work best near <b>520°</b>.';
+  if (!s.up.bellows) return 'More hearths mean more heat, and more wood. Save up for <b>Bellows</b>.';
+  if (!Sim.count(s, 'bellows')) return 'Put a <b>bellows</b> beside a hearth, then pump it.';
+  if (s.ring < 1) return 'You are short of floor. <b>Expand the floor</b> in Upgrades.';
+  if (!s.stats.cracks) return 'Keep pits under <b>900°</b> and woodcutters under <b>450°</b>, or they crack.';
+  if (Sim.upVisible(s, Sim.UMAP.forge) && s.wood < Sim.UMAP.forge.cost.wood && Sim.count(s, 'kiln')) return `The Forge needs <b>${fmt(Sim.UMAP.forge.cost.wood)} wood</b> in hand, and your kilns are burning it. Turn some off while you save.`;
+  const next = Sim.U.find(u => !s.up[u.id] && (!u.req || s.up[u.req]));
+  return next ? `Next: <b>${next.name}</b> (${fmtCost(next.cost)}). ${next.desc}` : '';
+}
+
+function renderPalette() {
+  let h = '';
+  for (const t of Sim.ORDER) {
+    if (!Sim.buildable(S, t)) continue;
+    const c = Sim.buildCost(S, t);
+    const ok = Sim.can(S, c);
+    h += `<button data-build="${t}" class="${armed === t ? 'sel' : ''} ${ok ? '' : 'off'}">${Sim.B[t].name}<small>${fmtCost(c)}</small></button>`;
+  }
+  setHTML($('#palette'), h);
+  $('#armHint').textContent = armed ? `Tap an empty tile to place a ${Sim.B[armed].name.toLowerCase()}.` : '';
+}
+$('#palette').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-build]'); if (!b) return;
+  const t = b.dataset.build;
+  armed = armed === t ? null : t;
+  if (armed) sel = -1;
+  refresh(true);
+});
+
+function infoHTML() {
+  if (sel < 0) {
+    if (armed) return `<h3>${Sim.B[armed].name}</h3><p>${Sim.B[armed].desc}</p>`;
+    return `<h3>The forge floor</h3><p>Tap a tile to see its temperature and what's on it. Pick a building above, then tap an empty tile to place it. Heat spreads from tile to tile and leaks away at the edges.</p>`;
+  }
+  const c = S.cells[sel], b = c.b;
+  const where = `Tile ${tileName(sel)}`;
+  if (!b) return `<h3>Empty floor <span class="muted">· ${where}</span></h3><dl class="kv"><dt>Temperature</dt><dd id="dynT"></dd></dl><p>Pick a building above to place it here.</p>`;
+  const d = Sim.B[b.t];
+  let rows = `<dt>Temperature</dt><dd id="dynT"></dd>`;
+  rows += `<dt>Cracks above</dt><dd>${Sim.maxT(S, b.t)}°</dd>`;
+  if (b.t === 'pit') rows += `<dt>Sweet spot</dt><dd>${d.ideal}° ± ${Math.round(Sim.pitWidth(S))}°</dd>`;
+  if (b.t === 'kiln') rows += `<dt>Sweet spot</dt><dd>${d.ideal}° ± ${d.width}°</dd>`;
+  if (b.t === 'pit' || b.t === 'lodge' || b.t === 'hearth' || b.t === 'kiln') rows += `<dt>Working at</dt><dd id="dynE"></dd><dt>${b.t === 'hearth' ? 'Burns' : 'Makes'}</dt><dd id="dynO"></dd>`;
+  if (b.t === 'kiln') rows += `<dt>Burns</dt><dd id="dynB"></dd>`;
+  if (b.t === 'hearth') rows += `<dt>Heat out</dt><dd id="dynH"></dd>`;
+  let btns = '';
+  if (b.cr) {
+    btns += `<button class="primary" data-act="repair">Repair · ${fmtCost(Sim.repairCost(S, sel))}</button>`;
+  } else if (d.levels > 1 && b.l < d.levels) {
+    const lc = Sim.levelCost(S, sel);
+    btns += `<button class="primary ${Sim.can(S, lc) ? '' : 'off'}" data-act="level">Level ${b.l + 1} · ${fmtCost(lc)}</button>`;
+  }
+  if (b.t === 'hearth' || b.t === 'kiln') {
+    for (const [v, l] of [[1, 'Full'], [0.5, 'Half'], [0, 'Off']]) btns += `<button data-act="th" data-v="${v}" class="${b.th === v ? 'sel' : ''}">${l}</button>`;
+  }
+  btns += `<button data-act="demolish">Demolish</button>`;
+  const status = b.cr ? ' <span style="color:var(--bad)">· cracked</span>' : '';
+  return `<h3>${d.name}${d.levels > 1 ? ' · level ' + b.l : ''}${status} <span class="muted">· ${where}</span></h3><p>${d.desc}</p><dl class="kv">${rows}</dl><div class="row">${btns}</div>`;
+}
+function renderInfo() {
+  const el = $('#info');
+  setHTML(el, infoHTML());
+  if (sel < 0) return;
+  const c = S.cells[sel], b = c.b;
+  const dT = $('#dynT'); if (dT) dT.textContent = Math.round(c.T) + '°';
+  if (!b) return;
+  const e = Sim.efficiency(S, sel);
+  const dE = $('#dynE'); if (dE && e !== null) dE.textContent = Math.round(e * 100) + '%';
+  const dO = $('#dynO');
+  if (dO) dO.textContent = b.t === 'hearth' ? (b.cr ? 0 : fmt(Sim.hearthBurn(S, b) * S.fuel)) + ' wood/s' : fmt(Sim.output(S, sel)) + (b.t === 'lodge' ? ' wood/s' : ' embers/s');
+  const dB = $('#dynB'); if (dB) dB.textContent = (b.cr ? 0 : fmt(Sim.kilnBurn(b) * S.kfuel)) + ' wood/s';
+  const dH = $('#dynH');
+  if (dH) dH.textContent = (b.cr ? 0 : fmt(Sim.hearthHeat(S, b) * S.fuel * Sim.bellowsMult(S, sel))) + '°/s';
+}
+$('#info').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-act]'); if (!btn || sel < 0) return;
+  const a = btn.dataset.act;
+  if (a === 'level') { if (!Sim.act(S, { k: 'level', i: sel })) toast('Not enough yet.'); }
+  else if (a === 'repair') { if (!Sim.act(S, { k: 'repair', i: sel })) toast('Not enough to repair it yet.'); }
+  else if (a === 'th') Sim.act(S, { k: 'throttle', i: sel, v: +btn.dataset.v });
+  else if (a === 'demolish') {
+    if (btn.dataset.confirm) { Sim.act(S, { k: 'demolish', i: sel }); }
+    else { btn.dataset.confirm = '1'; btn.textContent = 'Tap again to demolish'; return; }
+  }
+  refresh(true);
+});
+
+function renderUpgrades() {
+  let h = '<div class="card">';
+  const ec = Sim.expandCost(S);
+  if (ec) {
+    const [a, b] = Sim.bounds(S.ring + 1);
+    h += `<div class="up"><div class="txt"><b>Expand the floor</b><span>Clear the rock to a ${b - a + 1}×${b - a + 1} floor. The new edge stays cooler.</span></div><button data-up="expand" class="${Sim.can(S, ec) ? 'primary' : 'off'}">${fmtCost(ec)}</button></div>`;
+  }
+  let shown = 0;
+  for (const u of Sim.U) {
+    if (!Sim.upVisible(S, u)) continue;
+    shown++;
+    h += `<div class="up"><div class="txt"><b>${u.name}</b><span>${u.desc}</span></div><button data-up="${u.id}" class="${Sim.can(S, u.cost) ? 'primary' : 'off'}">${fmtCost(u.cost)}</button></div>`;
+  }
+  const hidden = Sim.U.filter(u => !S.up[u.id] && !Sim.upVisible(S, u)).length;
+  if (!shown && !ec) h += '<p>Nothing to buy right now.</p>';
+  if (hidden) h += `<p class="muted" style="margin-top:8px">${hidden} more to discover.</p>`;
+  h += '</div>';
+  const bought = Sim.U.filter(u => S.up[u.id]);
+  if (bought.length) h += `<p class="done-list">Bought: ${bought.map(u => u.name).join(', ')}.</p>`;
+  setHTML($('#tab-upgrades'), h);
+}
+$('#tab-upgrades').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-up]'); if (!b) return;
+  const id = b.dataset.up;
+  const ok = id === 'expand' ? Sim.act(S, { k: 'expand' }) : Sim.act(S, { k: 'upgrade', id });
+  if (!ok) toast('Not enough yet.');
+  else if (id === 'forge') showDone();
+  refresh(true);
+});
+
+function renderStats() {
+  const s = S;
+  let built = Sim.ORDER.map(t => [t, Sim.count(s, t)]).filter(([, n]) => n).map(([t, n]) => `${n} ${Sim.B[t].name.toLowerCase()}${n > 1 ? 's' : ''}`).join(', ');
+  let h = `<div class="card"><dl class="kv">
+    <dt>Time in the forge</dt><dd>${fmtTime(s.t)}</dd>
+    <dt>Embers made</dt><dd>${fmt(s.totalEmbers)}</dd>
+    <dt>Wood cut</dt><dd>${fmt(s.totalWood)}</dd>
+    <dt>Hottest tile ever</dt><dd>${Math.round(s.stats.hottest)}°</dd>
+    <dt>Cracks</dt><dd>${s.stats.cracks}</dd>
+    <dt>Taps</dt><dd>${s.stats.taps} kindling, ${s.stats.pumps} pumps</dd>
+    <dt>Buildings</dt><dd>${built || 'none'}</dd>
+  </dl></div><div class="card"><h3>Milestones</h3><dl class="kv">`;
+  for (const [id, name] of Sim.MS) h += `<dt>${name}</dt><dd>${id in s.ms ? fmtTime(s.ms[id]) : '<span class="muted">not yet</span>'}</dd>`;
+  h += '</dl></div>';
+  setHTML($('#tab-stats'), h);
+}
+
+function renderTop() {
+  $('#vEmbers').textContent = fmt(S.embers);
+  $('#vWood').textContent = fmt(S.wood);
+  const re = $('#rEmbers'), rw = $('#rWood');
+  re.textContent = (S.rate.embers >= 0 ? '+' : '') + fmt(S.rate.embers) + '/s';
+  const w = S.rate.wood;
+  rw.textContent = (w >= 0 ? '+' : '−') + fmt(Math.abs(w)) + '/s' + (S.fuel < 0.99 && S.prod.burn > 0 ? ' · hearths starving' : '');
+  rw.classList.toggle('neg', w < -0.05 || S.fuel < 0.99);
+  $('#clock').textContent = fmtTime(S.t);
+  $('#btnPump').classList.toggle('hidden', !S.up.bellows);
+  $('#chargeBar').style.width = (S.charge * 100).toFixed(0) + '%';
+  setHTML($('#goal'), goalText());
+}
+
+let lastFull = 0;
+function refresh(force) {
+  renderTop();
+  renderPalette();
+  renderInfo();
+  const now = performance.now();
+  if (force || now - lastFull > 500) {
+    lastFull = now;
+    if (prefs.tab === 'upgrades') renderUpgrades();
+    if (prefs.tab === 'stats') renderStats();
+  }
+}
+
+// ---------- tabs, overlays, buttons ----------
+function setTab(t) {
+  prefs.tab = t; savePrefs();
+  for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === t);
+  for (const id of ['upgrades', 'stats', 'settings']) $('#tab-' + id).classList.toggle('hidden', id !== t);
+  refresh(true);
+}
+$('#tabs').addEventListener('click', ev => { const b = ev.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); });
+function setOv(v) { prefs.ov = v; savePrefs(); $('#ovHeat').classList.toggle('sel', v === 'heat'); $('#ovEff').classList.toggle('sel', v === 'eff'); }
+$('#ovHeat').onclick = () => setOv('heat');
+$('#ovEff').onclick = () => setOv('eff');
+$('#btnGather').onclick = () => { Sim.act(S, { k: 'gather' }); renderTop(); };
+$('#btnPump').onclick = () => { Sim.act(S, { k: 'pump' }); renderTop(); };
+function setFmt(f) { prefs.fmt = f; savePrefs(); $('#fmtShort').classList.toggle('sel', f === 'short'); $('#fmtSci').classList.toggle('sel', f === 'sci'); cache.clear(); refresh(true); }
+$('#fmtShort').onclick = () => setFmt('short');
+$('#fmtSci').onclick = () => setFmt('sci');
+for (const b of document.querySelectorAll('[data-theme-set]')) b.onclick = () => { prefs.theme = b.dataset.themeSet; savePrefs(); applyTheme(); };
+$('#btnSave').onclick = () => { save(); toast('Saved.'); };
+$('#btnExport').onclick = () => {
+  const t = $('#saveText');
+  t.value = btoa(unescape(encodeURIComponent(Sim.serialize(S))));
+  t.select();
+  try { navigator.clipboard.writeText(t.value).then(() => toast('Save code copied.'), () => toast('Save code is in the box.')); } catch (e) { toast('Save code is in the box.'); }
+};
+$('#btnImport').onclick = () => {
+  const v = $('#saveText').value.trim();
+  if (!v) { toast('Paste a save code into the box first.'); return; }
+  try { S = Sim.deserialize(decodeURIComponent(escape(atob(v)))); sel = -1; armed = null; cache.clear(); save(); toast('Save loaded.'); refresh(true); }
+  catch (e) { toast('That save code could not be read.', 'bad'); }
+};
+$('#btnReset').onclick = function () {
+  if (!this.dataset.confirm) { this.dataset.confirm = '1'; this.textContent = 'Tap again to wipe everything'; return; }
+  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  S = Sim.newState(); sel = -1; armed = null; cache.clear();
+  this.dataset.confirm = ''; this.textContent = 'Hard reset';
+  setTab('upgrades');
+};
+
+// ---------- toasts and modals ----------
+function toast(msg, kind = '') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind; el.innerHTML = msg;
+  $('#toasts').appendChild(el);
+  while ($('#toasts').children.length > 3) $('#toasts').firstChild.remove();
+  setTimeout(() => el.remove(), 3500);
+}
+function modal(html) { $('#modalBody').innerHTML = html; $('#modal').classList.add('show'); }
+$('#modal').addEventListener('click', ev => { if (ev.target.id === 'modal' || ev.target.closest('[data-close]')) $('#modal').classList.remove('show'); });
+function showDone() {
+  modal(`<h3>The Forge is kindled</h3><p>You finished milestone 1 in <b>${fmtTime(S.t)}</b>, with ${S.stats.cracks} cracks along the way.</p>
+    <p>The next layer (alloys, a crucible and recipe discovery) builds on this floor. Your save carries over. You can keep playing in the meantime.</p>
+    <div class="row"><button class="primary" data-close>Keep playing</button></div>`);
+}
+function handleEvents() {
+  if (!S.events.length) return;
+  let cracks = 0, lastCrack = null;
+  for (const e of S.events) {
+    if (e.k === 'crack') { cracks++; lastCrack = e; }
+    else if (e.k === 'ms' && e.id !== 'forge') toast(`Milestone: <b>${e.name}</b>`, 'good');
+  }
+  if (cracks === 1) toast(`A ${Sim.B[lastCrack.t].name.toLowerCase()} cracked from the heat at ${tileName(lastCrack.i)}.`, 'bad');
+  else if (cracks > 1) toast(`${cracks} buildings cracked from the heat.`, 'bad');
+  S.events.length = 0;
+}
+
+// ---------- main loop ----------
+let last = performance.now(), acc = 0, lastUi = 0, lastSave = performance.now();
+function frame(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 2) {
+    const r = Sim.fastForward(S, dt);
+    if (dt > 60) showAway(r);
+  } else {
+    acc += dt;
+    let k = 0;
+    while (acc >= Sim.DT && k++ < 40) { Sim.step(S); acc -= Sim.DT; }
+    if (k >= 40) acc = 0;
+  }
+  handleEvents();
+  draw(now);
+  if (now - lastUi > 200) { lastUi = now; refresh(false); }
+  if (now - lastSave > 10000) { lastSave = now; save(); }
+  requestAnimationFrame(frame);
+}
+function showAway(r) {
+  modal(`<h3>While you were away</h3><p>The forge kept burning for ${fmtDur(r.secs)}.</p>
+    <dl class="kv"><dt>Embers</dt><dd>${r.embers >= 0 ? '+' : ''}${fmt(r.embers)}</dd><dt>Wood</dt><dd>${r.wood >= 0 ? '+' : '−'}${fmt(Math.abs(r.wood))}</dd>${r.cracks ? `<dt>Cracks</dt><dd>${r.cracks}</dd>` : ''}</dl>
+    ${r.secs >= 8 * 3600 ? '<p>The forge only catches up on 8 hours at a time.</p>' : ''}
+    <div class="row"><button class="primary" data-close>Back to the forge</button></div>`);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
+window.addEventListener('pagehide', save);
+
+setOv(prefs.ov);
+setFmt(prefs.fmt);
+setTab(prefs.tab);
+if (offline && offline.secs > 30) showAway(offline);
+if (S.done) handleEvents();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

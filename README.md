@@ -55,6 +55,25 @@ The game is still one file, organised into classes: `World` (chunked tiles, terr
 
 Open `ember-vale.html` in any browser. To play it on an iPhone, serve it from anywhere, for example GitHub Pages: Settings → Pages → deploy from the `main` branch. Then open the page in Safari and choose Share → Add to Home Screen.
 
+## Emberwright (milestone 1)
+
+An incremental game about running a forge, in one file: `emberwright.html`. No build step, no dependencies, saves to the browser.
+
+The core is a **heat grid**. Hearths burn wood and heat their tile, heat spreads to neighbouring tiles and leaks away at the edge of the floor, and every building cares about the temperature of its own tile:
+
+- **Ember pits** make embers, best near 520°, and crack above 900°.
+- **Woodcutters** slow down above 120°, so they belong at the cool edge.
+- **Charcoal kilns** turn spare wood into embers and give off heat; they want the warm band around 380°.
+- **Bellows** (pumped by hand) boost the hearths next to them; **firebrick** blocks heat; **flue vents** draw it out.
+- Hearths and kilns can be run at full, half or off. Buildings level up. Overheated buildings crack, dump heat into their neighbours (which can crack them too) and need repairing.
+- **Expanding the floor** moves the cold edge outward, so the core runs hotter after every expansion and the layout has to be rethought.
+
+Milestone 1 ends when you kindle the Forge (1M embers and 20K wood), about 40 minutes of good play. The Efficiency overlay shows which buildings are running well. Offline progress catches up on up to 8 hours.
+
+### Balance harness
+
+`node tools/balance.js` plays the real simulation with bots: a lookahead planner (active and idle), a heat-aware heuristic player, a heat-blind greedy player and a random one. It reports the minute each milestone fell and fails unless the fastest sensible strategy finishes in 30 to 50 minutes and the sensible strategies stay within 2x of each other. `tools/loadsim.js` pulls the simulation out of the HTML (between the `SIM-BEGIN` and `SIM-END` markers), so the bots and the game run the same code.
+
 ## Unity port (work in progress)
 
 `unity/` holds a Unity project for an iPhone build of Ember Vale, with Blender-generated low-poly models. See [unity/README.md](unity/README.md) and [unity/PORT_PLAN.md](unity/PORT_PLAN.md). The HTML game remains the design reference.
