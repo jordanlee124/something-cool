@@ -71,11 +71,13 @@ The core is a **heat grid**. Hearths burn wood and heat their tile, heat spreads
 
 **Wren, the forgemaster**, teaches the game. A ten-step walkthrough points at one button or tile at a time (a yellow glow, or a bouncing marker on the floor) and moves on when you do the thing. The game is paused during the two opening explanations. After that, Wren turns up once for each new mechanic when it first matters: a tile about to crack, a crack, hearths running out of wood, a pit too hot or too cold, a new building unlocked, the first expansion, the Forge. Urgent warnings cut in front of ordinary tips. Tapping Wren gives advice on what to do next. Progress is kept in the save, and Settings can replay the tutorial or turn the pop-ups off.
 
-Milestone 1 ends when you kindle the Forge (1M embers and 20K wood), about 40 minutes of good play. The Efficiency overlay shows which buildings are running well. Offline progress catches up on up to 8 hours.
+Milestone 1 ends when you kindle the Forge (1M embers and 20K wood), about 40 minutes of good play.
+
+**Milestone 2a, smelting**, starts there. Ore veins of tin, copper and iron run through the floor (faintly visible from the start, so you can keep them clear; iron lies deeper and needs a bigger floor). Mines dig the vein they sit on; carters take the ore to smelters and the ingots to the yard. A smelter makes no heat of its own and works only near its metal's melting point: tin about 320°, copper 700°, iron 920°, which is hotter than an ember pit survives, so iron wants its own walled corner. After the first copper, **Dampers** let the hearths beside a smelter tend themselves. Ingots buy a new tier of upgrades, and the milestone ends with **casting the Great Anvil**, about half an hour after the Forge. The Efficiency overlay shows which buildings are running well. Offline progress catches up on up to 8 hours.
 
 ### Balance harness
 
-`node tools/balance.js` plays the real simulation with bots: a lookahead planner (active and idle), a heat-aware heuristic player, a heat-blind greedy player and a random one. It reports the minute each milestone fell and fails unless the fastest sensible strategy finishes in 30 to 50 minutes and the sensible strategies stay within 2x of each other. `tools/loadsim.js` pulls the simulation out of the HTML (between the `SIM-BEGIN` and `SIM-END` markers), so the bots and the game run the same code.
+`node tools/balance.js` plays the real simulation with bots: a lookahead planner (active and idle), a heat-aware heuristic player, a heat-blind greedy player and a random one. It reports the minute each milestone fell and fails unless the fastest sensible strategy kindles the Forge in 30 to 50 minutes and casts the anvil 20 to 45 minutes after that, with the sensible strategies within 2x of each other on both. `tools/loadsim.js` pulls the simulation out of the HTML (between the `SIM-BEGIN` and `SIM-END` markers), so the bots and the game run the same code.
 
 ## Unity port (work in progress)
 

@@ -21,11 +21,18 @@ const SEEDS = +opt('seeds', 1);
 const ONLY = opt('bot', null);
 const TRACE = flag('trace');
 const LIMIT = +(opt("limit", 3 * 3600));
-const TARGET = [30 * 60, 50 * 60];
+const TARGET = [30 * 60, 50 * 60];      // fastest sensible Forge
+const TARGET2 = [20 * 60, 45 * 60];     // fastest sensible Forge -> Great Anvil
 
 // ---------- helpers ----------
 const clone = s => { const c = structuredClone(s); c.events = []; return c; };
-const empties = s => { const o = []; for (let i = 0; i < N * N; i++) if (Sim.unlocked(s, i) && !s.cells[i].b) o.push(i); return o; };
+// Tiles the milestone-2 manager has cleared for a smelter or its hearths; other rules keep off them.
+const reserved = new Set();
+const empties = s => { const o = []; for (let i = 0; i < N * N; i++) if (Sim.unlocked(s, i) && !s.cells[i].b && !reserved.has(i)) o.push(i); return o; };
+// Hearths beside a smelter belong to the milestone-2 manager.
+// Carters free for new work: idle, or only clearing a pile into the yard.
+const spareCarters = s => s.carts.filter(c => !c.job || (c.job.dst === -1 && c.job.stage === 'get' && c.job.src >= 0)).length;
+const byStation = (s, i) => NB[i].some(j => j >= 0 && s.cells[j].b && s.cells[j].b.t === 'smelter');
 const nbs = (s, i) => NB[i].filter(j => j >= 0 && Sim.unlocked(s, j));
 const adj = (s, i, t) => nbs(s, i).filter(j => s.cells[j].b && s.cells[j].b.t === t && !s.cells[j].b.cr).length;
 const all = (s, t) => { const o = []; for (let i = 0; i < N * N; i++) if (s.cells[i].b && s.cells[i].b.t === t) o.push(i); return o; };
@@ -116,10 +123,10 @@ const costEq = (c, wv) => (c.embers || 0) + wv * (c.wood || 0) + 1;
 
 // Buying anything once the Forge is in sight only makes sense if it gets you there sooner.
 function helpsGoal(s, c, gain) {
-  const f = Sim.UMAP.forge;
+  const f = s.up.forge ? Sim.UMAP.anvil : Sim.UMAP.forge;
   if (!Sim.upVisible(s, f)) return true;
   const r = Math.max(1e-9, s.rate.embers), rem = Math.max(0, f.cost.embers - s.embers);
-  if ((c.wood || 0) > 0 && s.wood - c.wood < f.cost.wood) return false;
+  if ((c.wood || 0) > 0 && f.cost.wood && s.wood - c.wood < f.cost.wood) return false;
   return (rem + (c.embers || 0)) / (r + gain) < rem / r;
 }
 
@@ -197,7 +204,7 @@ function logistics(s, out) {
     if (Sim.isFire(b) && !b.cr && b.th > 0 && b.f < 0.01) cold++;
     if (b.t === 'lodge' && b.f >= Sim.storeCap(b) - 0.01) full++;
   }
-  if (!(full && cold)) return;
+  if (!(full && cold) || (s.up.forge && spareCarters(s) >= 2)) return;
   const opts = [];
   const h = bestTiles(s, 'hut', 1)[0]; if (h !== undefined) opts.push({ k: 'build', t: 'hut', i: h });
   for (const i of all(s, 'hut')) if (s.cells[i].b.l < B.hut.levels) opts.push({ k: 'level', i });
@@ -206,11 +213,149 @@ function logistics(s, out) {
   out.push(...opts.slice(0, 1));
 }
 
+// ---------- milestone 2a: mines, smelters, metal ----------
+const m2mem = { t: 0, bars: null, rate: {}, want: new Map(), lastHeat: new Map(), coldSince: new Map(), hotSince: new Map(), moves: new Map() };
+function veinTile(s, m) {
+  let best, bt = Infinity;
+  for (let i = 0; i < N * N; i++) if (Sim.unlocked(s, i) && !s.cells[i].b && s.veins[i] === m && T(s, i) < bt) { bt = T(s, i); best = i; }
+  return best;
+}
+const CLEARABLE = new Set(['pit', 'lodge', 'kiln', 'wall', 'vent', 'bellows']);
+const clearCost = (s, i) => { const b = s.cells[i].b; return !b ? 0 : CLEARABLE.has(b.t) ? 150 + (Sim.output(s, i) || 0) / Math.max(1, s.rate.embers) * 3000 : Infinity; };
+function smelterTile(s, m) {
+  const melt = Sim.MELT[m].t;
+  let best, bv = -Infinity;
+  for (let i = 0; i < N * N; i++) {
+    if (!Sim.unlocked(s, i) || s.veins[i] || !isFinite(clearCost(s, i))) continue;
+    const pits = adj(s, i, 'pit'), hs = adj(s, i, 'hearth'), sms = adj(s, i, 'smelter');
+    const v = -Math.abs(T(s, i) - melt) + (m === 'iron' ? hs * 150 - pits * 400 : -pits * 100) - sms * 500 - clearCost(s, i);
+    if (v > bv) { bv = v; best = i; }
+  }
+  return best;
+}
+function m2(s, out) {
+  if (!s.up.forge || s.done) return;
+  for (const i of [...reserved]) if (s.cells[i].b && ['smelter', 'hearth', 'mine'].includes(s.cells[i].b.t)) reserved.delete(i);
+  const A = Sim.UMAP.anvil;
+  if (Sim.can(s, A.cost)) { out.push({ k: 'upgrade', id: 'anvil' }); return; }
+  if (!m2mem.bars || s.t - m2mem.t >= 60) {
+    if (m2mem.bars) for (const m of Sim.METALS) m2mem.rate[m] = (s.totalBars[m] - m2mem.bars[m]) / (s.t - m2mem.t);
+    m2mem.bars = { ...s.totalBars }; m2mem.t = s.t;
+  }
+  for (const id of ['dampers', 'grates', 'copperflue', 'wheels', 'tinplate', 'irontools', 'crucible']) {
+    const u = Sim.UMAP[id];
+    if (Sim.upVisible(s, u) && Sim.can(s, u.cost)) out.push({ k: 'upgrade', id });
+  }
+  // Each smelter set to the metal it was built for.
+  for (const [i, m] of m2mem.want) { const b = s.cells[i].b; if (b && b.t === 'smelter' && b.m !== m) out.push({ k: 'metal', i, m, free: true }); }
+  let missingVein = false;
+  for (const m of Sim.METALS) {
+    if (!all(s, 'mine').some(i => s.cells[i].b.m === m)) {
+      const t = veinTile(s, m);
+      if (t !== undefined) out.push({ k: 'build', t: 'mine', i: t });
+      else {
+        // The vein is built over: pull down the least useful building on it.
+        let d, dv = Infinity;
+        for (let i = 0; i < N * N; i++) {
+          const b = s.cells[i].b;
+          if (s.veins[i] !== m || !b || !Sim.unlocked(s, i) || ['hut', 'mine', 'smelter'].includes(b.t)) continue;
+          const v = (Sim.output(s, i) || 0) + (b.t === 'hearth' ? 50 : 0);
+          if (v < dv) { dv = v; d = i; }
+        }
+        if (d !== undefined) { reserved.add(d); out.push({ k: 'demolish', i: d, free: true }); } else missingVein = true;
+      }
+    }
+    if (!all(s, 'smelter').some(i => m2mem.want.get(i) === m && s.cells[i].b && s.cells[i].b.t === 'smelter')) {
+      const t = smelterTile(s, m);
+      if (t !== undefined) {
+        reserved.add(t);
+        if (s.cells[t].b) { if (Sim.can(s, Sim.buildCost(s, 'smelter'))) out.push({ k: 'demolish', i: t, free: true }); }
+        else { m2mem.want.set(t, m); out.push({ k: 'build', t: 'smelter', i: t }); }
+      }
+    }
+  }
+  if (missingVein && Sim.expandCost(s)) out.push({ k: 'expand' });
+  // Keep each smelter near its melting point.
+  for (const i of all(s, 'smelter')) {
+    const b = s.cells[i].b; if (b.cr) continue;
+    const melt = Sim.MELT[b.m], t = T(s, i);
+    const hs = nbs(s, i).filter(j => s.cells[j].b && s.cells[j].b.t === 'hearth');
+    if (t < melt.t - melt.w * 0.5) {
+      const off = hs.find(j => s.cells[j].b.th < 1);
+      if (off !== undefined && !s.up.dampers) out.push({ k: 'throttle', i: off, v: 1, free: true });
+      // With dampers, only add heat once every hearth beside it is already wide open.
+      if (s.up.dampers && hs.some(j => s.cells[j].b.th < 0.9)) continue;
+      if (!m2mem.coldSince.has(i)) m2mem.coldSince.set(i, s.t);
+      // Heat takes a while to build: add at most one hearth a minute, and only when far too cold.
+      const far = t < melt.t - melt.w, recent = s.t - (m2mem.lastHeat.get(i) ?? -1e9) < 60;
+      const spot = nbs(s, i).filter(j => !s.veins[j] && isFinite(clearCost(s, j)) && adj(s, j, 'lodge') === 0 && adj(s, j, 'mine') === 0)
+        .sort((a, c) => clearCost(s, a) - clearCost(s, c))[0];
+      if (spot === undefined && hs.length === 0 && s.t - m2mem.coldSince.get(i) > 180) {
+        // Nowhere to put a fire: move the smelter.
+        m2mem.want.delete(i); m2mem.coldSince.delete(i); reserved.delete(i);
+        out.push({ k: 'demolish', i, free: true });
+        continue;
+      }
+      if (spot !== undefined && hs.length < 3 && far && !recent) {
+        m2mem.lastHeat.set(i, s.t);
+        reserved.add(spot);
+        if (s.cells[spot].b) { if (Sim.can(s, Sim.buildCost(s, 'hearth'))) out.push({ k: 'demolish', i: spot, free: true }); }
+        else out.push({ k: 'build', t: 'hearth', i: spot });
+      }
+      // Only turn up hearths that have nothing heat-shy beside them.
+      const safe = j => nbs(s, j).every(k => { const b = s.cells[k].b; return !b || ['hearth', 'smelter', 'wall', 'vent', 'bellows'].includes(b.t); });
+      const low = hs.filter(j => s.cells[j].b.l < B.hearth.levels && safe(j)).sort((a, c) => s.cells[a].b.l - s.cells[c].b.l)[0];
+      if (low !== undefined && far && !recent) { m2mem.lastHeat.set(i, s.t); out.push({ k: 'level', i: low }); }
+    } else if (t > melt.t + melt.w * 0.6) {
+      m2mem.coldSince.delete(i);
+      // Too hot even with its own hearths shut: the ground is wrong, so move it.
+      if (!m2mem.hotSince.has(i)) m2mem.hotSince.set(i, s.t);
+      if (t > melt.t + melt.w && hs.every(j => s.cells[j].b.th < 0.15) && s.t - m2mem.hotSince.get(i) > 180 && (m2mem.moves.get(b.m) || 0) < 3) {
+        m2mem.moves.set(b.m, (m2mem.moves.get(b.m) || 0) + 1);
+        m2mem.want.delete(i); m2mem.hotSince.delete(i);
+        out.push({ k: 'demolish', i, free: true });
+        continue;
+      }
+      if (s.up.dampers) continue;
+      const on = hs.find(j => s.cells[j].b.th > 0);
+      if (on !== undefined) out.push({ k: 'throttle', i: on, v: s.cells[on].b.th === 1 ? 0.5 : 0, free: true });
+    } else { m2mem.coldSince.delete(i); m2mem.hotSince.delete(i); }
+  }
+  // Grow the slowest metal: more smelting if ore is waiting, more ore (or carters) if it isn't.
+  let worst = null, wt = -1;
+  for (const m of Sim.METALS) {
+    const need = Math.max(0, (A.cost[m] || 0) - s[m]);
+    if (!need) continue;
+    const tm = need / Math.max(1e-3, m2mem.rate[m] || 0);
+    if (tm > wt) { wt = tm; worst = m; }
+  }
+  if (!worst) return;
+  const sm = all(s, 'smelter').filter(i => s.cells[i].b.m === worst && !s.cells[i].b.cr);
+  const mines = all(s, 'mine').filter(i => s.cells[i].b.m === worst);
+  if (!sm.length || !mines.length) return;
+  const fed = sm.some(i => s.cells[i].b.f > Sim.storeCap(s.cells[i].b) * 0.4);
+  const eff = Math.max(...sm.map(i => Sim.efficiency(s, i) || 0));
+  if (fed && eff > 0.5) {
+    const lv = sm.filter(i => s.cells[i].b.l < B.smelter.levels).sort((a, c) => s.cells[a].b.l - s.cells[c].b.l)[0];
+    if (lv !== undefined) out.push({ k: 'level', i: lv });
+  } else if (!fed) {
+    const piled = mines.some(i => s.cells[i].b.f >= Sim.storeCap(s.cells[i].b) - 0.5);
+    if (piled && spareCarters(s) < 2) {
+      const h = bestTiles(s, 'hut', 1)[0]; if (h !== undefined) out.push({ k: 'build', t: 'hut', i: h });
+      for (const i of all(s, 'hut')) out.push({ k: 'level', i });
+    } else {
+      const t = veinTile(s, worst); if (t !== undefined) out.push({ k: 'build', t: 'mine', i: t });
+      const lv = mines.sort((a, c) => s.cells[a].b.l - s.cells[c].b.l)[0]; out.push({ k: 'level', i: lv });
+    }
+  }
+}
+
 function housekeeping(s, out) {
   emergencies(s, out);
   logistics(s, out);
+  m2(s, out);
   const f = Sim.UMAP.forge;
-  if (Sim.upVisible(s, f)) {
+  if (!s.up.forge && Sim.upVisible(s, f)) {
     out.push({ k: 'upgrade', id: 'forge' });
     // Kilns eat the wood the Forge needs: bank it.
     if (s.wood < f.cost.wood) for (const i of all(s, 'kiln')) if (s.cells[i].b.th > 0) out.push({ k: 'throttle', i, v: 0, free: true });
@@ -257,7 +402,7 @@ const bots = {
     // Free actions (throttles) first: take one only if it clearly helps.
     let bestFree = null, bestFreeGain = Math.max(0.03 * Math.abs(base), 0.02);
     for (const i of all(s, 'hearth').concat(all(s, 'kiln'))) for (const v of [0, 0.5, 1]) {
-      if (s.cells[i].b.th === v || s.t - (lastThrottle.get(i) ?? -1e9) < 60) continue;
+      if (s.cells[i].b.th === v || s.t - (lastThrottle.get(i) ?? -1e9) < 60 || byStation(s, i)) continue;
       // Only consider turning down when a neighbour runs past its sweet spot, and up when one runs cold.
       const ns = nbs(s, i).map(j => s.cells[j].b && !s.cells[j].b.cr ? [s.cells[j].b.t, T(s, j)] : null).filter(Boolean);
       const hotN = ns.some(([t, tt]) => (t === 'pit' && tt > B.pit.ideal + 60) || (t !== 'pit' && t !== 'hearth' && t !== 'kiln' && t !== 'wall' && t !== 'vent' && tt > Sim.maxT(s, t) - 100) || (t === 'kiln' && tt > B.kiln.ideal + 60));
@@ -308,13 +453,14 @@ const bots = {
     for (let i = 0; i < N * N; i++) {
       const b = s.cells[i].b; if (!b || b.cr || b.t === 'hearth') continue;
       if (T(s, i) > Sim.maxT(s, b.t) - 60) {
-        for (const j of nbs(s, i)) { const h = s.cells[j].b; if (h && (h.t === 'hearth' || h.t === 'kiln') && h.th > 0) { out.push({ k: 'throttle', i: j, v: h.th === 1 ? 0.5 : 0, free: true }); break; } }
+        for (const j of nbs(s, i)) { const h = s.cells[j].b; if (h && (h.t === 'hearth' || h.t === 'kiln') && h.th > 0 && !byStation(s, j)) { out.push({ k: 'throttle', i: j, v: h.th === 1 ? 0.5 : 0, free: true }); break; } }
         if (Sim.buildable(s, 'vent')) { const v = bestTiles(s, 'vent', 1)[0]; if (v !== undefined) out.push({ k: 'build', t: 'vent', i: v }); }
       }
     }
     // Tune each hearth by the pits around it: down when they run past the sweet spot, up when they run cold.
     for (const i of all(s, 'hearth')) {
       const h = s.cells[i].b;
+      if (byStation(s, i)) continue;
       const pits = nbs(s, i).filter(j => s.cells[j].b && s.cells[j].b.t === 'pit' && !s.cells[j].b.cr);
       if (!pits.length) continue;
       const avg = pits.reduce((a, j) => a + T(s, j), 0) / pits.length;
@@ -332,6 +478,7 @@ const bots = {
     const out = [];
     for (let i = 0; i < N * N; i++) { const b = s.cells[i].b; if (b && b.cr && rng() < 0.5) out.push({ k: 'repair', i }); }
     if (Sim.upVisible(s, Sim.UMAP.forge)) out.push({ k: 'upgrade', id: 'forge' });
+    if (Sim.upVisible(s, Sim.UMAP.anvil)) out.push({ k: 'upgrade', id: 'anvil' });
     if (rng() < 0.5) return out;
     const e = empties(s);
     const pool = [];
@@ -349,6 +496,7 @@ const bots = {
 function run(name, seed, active) {
   const s = Sim.newState(seed);
   lastThrottle.clear();
+  m2mem.t = 0; m2mem.bars = null; m2mem.rate = {}; m2mem.want.clear(); m2mem.lastHeat.clear(); m2mem.coldSince.clear(); m2mem.hotSince.clear(); m2mem.moves.clear(); reserved.clear();
   let r = seed * 9301 + 49297;
   const rng = () => (r = (r * 9301 + 49297) % 233280) / 233280;
   let nextDecide = 0, nextPump = 0, actions = 0;
@@ -387,6 +535,8 @@ function run(name, seed, active) {
 function desc(s, a) {
   if (a.k === 'build') return `build ${a.t} at ${a.i % N},${(a.i / N) | 0} (T=${Math.round(s.cells[a.i].T)})`;
   if (a.k === 'level') return `level ${s.cells[a.i].b.t} at ${a.i % N},${(a.i / N) | 0} -> ${s.cells[a.i].b.l}`;
+  if (a.k === 'demolish') return `demolish ${a.i % N},${(a.i / N) | 0}`;
+  if (a.k === 'metal') return `smelter at ${a.i % N},${(a.i / N) | 0} -> ${a.m}`;
   if (a.k === 'throttle') return `throttle hearth ${a.i % N},${(a.i / N) | 0} -> ${a.v}`;
   if (a.k === 'upgrade') return `upgrade ${a.id}`;
   return a.k + (a.i !== undefined ? ' ' + a.i : '');
@@ -395,34 +545,41 @@ function desc(s, a) {
 const SENSIBLE = new Set(['planner', 'cautious']);
 const fm = t => t === undefined ? '   —  ' : (t / 60).toFixed(1).padStart(6);
 const RUNS = [['planner', true], ['planner', false], ['greedy', true], ['cautious', true], ['random', true]].filter(([n]) => !ONLY || n === ONLY);
-const KEYS = ['lodge', 'e1k', 'bellows', 'ring1', 'e10k', 'ring2', 'e100k', 'ring3', 'e1m', 'forge'];
+const KEYS = ['e1k', 'ring1', 'e10k', 'ring2', 'e100k', 'ring3', 'e1m', 'forge', 'bar', 'iron', 'anvil'];
 console.log(`Minutes to each milestone (seed${SEEDS > 1 ? 's 1..' + SEEDS : ' 1'})`);
 console.log('bot              ' + KEYS.map(k => k.padStart(6)).join(' ') + '   cracks  actions');
-const finish = {};
+const finish = {}, finish2 = {};
 for (const [name, active] of RUNS) {
   const label = name + (active ? '' : ' (idle)');
-  const acc = {}; let cracks = 0, acts = 0, fin = 0, finN = 0;
+  const acc = {}; let cracks = 0, acts = 0, fin = 0, finN = 0, fin2 = 0, fin2N = 0;
   for (let seed = 1; seed <= SEEDS; seed++) {
     const t0 = Date.now();
     const { s, actions, log } = run(name, seed, active);
     if (TRACE) console.log(log.join('\n'));
     for (const k of KEYS) if (k in s.ms) (acc[k] = acc[k] || []).push(s.ms[k]);
     cracks += s.stats.cracks; acts += actions;
-    if (s.done) { fin += s.ms.forge; finN++; }
+    if ('forge' in s.ms) { fin += s.ms.forge; finN++; }
+    if (s.done) { fin2 += s.ms.anvil; fin2N++; }
     if (TRACE) console.error(`${label} seed ${seed}: ${((Date.now() - t0) / 1000).toFixed(1)}s wall`);
   }
   const avg = k => acc[k] && acc[k].length === SEEDS ? acc[k].reduce((a, b) => a + b, 0) / SEEDS : undefined;
   console.log(label.padEnd(17) + KEYS.map(k => fm(avg(k))).join(' ') + String(Math.round(cracks / SEEDS)).padStart(9) + String(Math.round(acts / SEEDS)).padStart(9));
-  if (SENSIBLE.has(name)) finish[label] = finN === SEEDS ? fin / SEEDS : Infinity;
+  if (SENSIBLE.has(name)) {
+    finish[label] = finN === SEEDS ? fin / SEEDS : Infinity;
+    finish2[label] = fin2N === SEEDS ? fin2 / SEEDS : Infinity;
+  }
 }
 
 const vals = Object.values(finish);
 if (vals.length >= 2) {
-  const lo = Math.min(...vals), hi = Math.max(...vals);
-  const spread = hi / lo;
-  console.log(`\nSpread between sensible strategies: ${isFinite(spread) ? spread.toFixed(2) + 'x' : 'a bot never finished'} (limit 2x)`);
-  console.log(`Fastest finish: ${(lo / 60).toFixed(1)} min (target ${TARGET[0] / 60}-${TARGET[1] / 60})`);
-  const ok = isFinite(spread) && spread <= 2 && lo >= TARGET[0] && lo <= TARGET[1];
+  const lo = Math.min(...vals), hi = Math.max(...vals), spread = hi / lo;
+  const labels = Object.keys(finish);
+  const phase = labels.map(l => finish2[l] - finish[l]);
+  const lo2 = Math.min(...phase), hi2 = Math.max(...phase), spread2 = hi2 / lo2;
+  console.log(`\nForge:        fastest ${(lo / 60).toFixed(1)} min (target ${TARGET[0] / 60}-${TARGET[1] / 60}), spread ${isFinite(spread) ? spread.toFixed(2) + 'x' : 'a bot never finished'} (limit 2x)`);
+  console.log(`Forge->Anvil: fastest ${(lo2 / 60).toFixed(1)} min (target ${TARGET2[0] / 60}-${TARGET2[1] / 60}), spread ${isFinite(spread2) ? spread2.toFixed(2) + 'x' : 'a bot never finished'} (limit 2x)`);
+  const ok = isFinite(spread) && spread <= 2 && lo >= TARGET[0] && lo <= TARGET[1]
+    && isFinite(spread2) && spread2 <= 2 && lo2 >= TARGET2[0] && lo2 <= TARGET2[1];
   console.log(ok ? 'BALANCE OK' : 'BALANCE OUT OF RANGE');
   process.exitCode = ok ? 0 : 1;
 }

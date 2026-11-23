@@ -26,6 +26,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); }
+html { scroll-padding-bottom: calc(var(--dock-h, 0px) + 16px); scroll-padding-top: 12px; }
 body {
   font: 15px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
@@ -37,6 +38,9 @@ h1 { font-size: 20px; margin: 0; letter-spacing: .02em; }
 h1 span { color: var(--accent); }
 .clock { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .res { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.metals { display: flex; gap: 8px; margin-top: 8px; }
+.metals .chip { flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 13px; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 6px; }
+.metals .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .res .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; box-shadow: var(--shadow); }
 .res .lab { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .res .val { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -124,6 +128,7 @@ textarea { width: 100%; height: 90px; font: 12px ui-monospace, monospace; backgr
     <div class="box"><div class="lab">Embers</div><div class="val" id="vEmbers">0</div><div class="rate" id="rEmbers">+0/s</div></div>
     <div class="box"><div class="lab">Wood · yard</div><div class="val" id="vWood">0</div><div class="rate" id="rWood">+0/s</div></div>
   </div>
+  <div class="metals hidden" id="metals"></div>
   <div style="height:10px"></div>
   <div class="board"><canvas id="grid" width="600" height="600" aria-label="Forge floor"></canvas></div>
   <div class="legend"><span>20°</span><div class="bar" id="legendBar"></div><span>1200°+</span></div>
@@ -188,7 +193,7 @@ textarea { width: 100%; height: 90px; font: 12px ui-monospace, monospace; backgr
 // The simulation: plain data in, plain data out. No DOM. balance.js runs this same code under Node.
 const Sim = (() => {
   'use strict';
-  const N = 12, DT = 0.25, AMB = 20, DIFF = 0.2, LOSS = 0.02, VERSION = 2;
+  const N = 12, DT = 0.25, AMB = 20, DIFF = 0.2, LOSS = 0.02, VERSION = 3;
 
   const B = {
     pit:     { name: 'Ember pit',  cost: { embers: 15 },            growth: 1.30, maxT: 900,  cond: 1,    ideal: 520, width: 240, rate: 1, levels: 12,
@@ -201,6 +206,10 @@ const Sim = (() => {
                desc: 'Burns wood into embers and gives off some heat. Best near 380°; it burns its wood whatever the temperature.' },
     hut:     { name: "Carter's hut", cost: { embers: 25 }, growth: 1.7, maxT: 500, cond: 1, levels: 6,
                desc: 'Home to carters, who carry wood from woodcutters to the fires that need it. Each level adds a carter. Spare wood goes to the yard here.' },
+    mine:    { name: 'Mine', cost: { embers: 4000, wood: 800 }, growth: 1.45, maxT: 950, cond: 1, rate: 0.3, cool: 350, unlock: 'forge', levels: 8,
+               desc: 'Digs ore out of the vein it sits on. Miners work below the floor, so they shrug off heat up to 350°, then slow down; it cracks above 950°.' },
+    smelter: { name: 'Smelter', cost: { embers: 15000, wood: 2000 }, growth: 1.5, maxT: 1600, cond: 1, rate: 0.3, unlock: 'forge', levels: 8,
+               desc: 'Melts two ore into one ingot. Each metal melts at its own heat; a smelter makes no heat of its own.' },
     bellows: { name: 'Bellows',    cost: { embers: 250, wood: 60 }, growth: 1.60, maxT: 950,  cond: 1,    boost: 1.0, unlock: 'bellows', levels: 1,
                desc: 'While pumped, adds up to +100% heat to every hearth next to it.' },
     wall:    { name: 'Firebrick',  cost: { embers: 60, wood: 20 },  growth: 1.18, maxT: 2400, cond: 0.06, unlock: 'firebrick', levels: 1,
@@ -208,7 +217,10 @@ const Sim = (() => {
     vent:    { name: 'Flue vent',  cost: { embers: 120, wood: 30 }, growth: 1.35, maxT: 1800, cond: 1,    cool: 0.35, unlock: 'vents', levels: 6,
                desc: 'Draws heat out of its tile, and so out of the tiles around it.' },
   };
-  const ORDER = ['pit', 'hearth', 'lodge', 'hut', 'kiln', 'bellows', 'wall', 'vent'];
+  const ORDER = ['pit', 'hearth', 'lodge', 'hut', 'kiln', 'mine', 'smelter', 'bellows', 'wall', 'vent'];
+  const METALS = ['tin', 'copper', 'iron'];
+  // Where each metal melts, and how far either side a smelter still works.
+  const MELT = { tin: { t: 320, w: 110 }, copper: { t: 700, w: 130 }, iron: { t: 920, w: 150 } };
 
   // Upgrades. `req` must be bought first. Each one is shown once total embers reach a quarter of its ember cost.
   const U = [
@@ -229,8 +241,17 @@ const Sim = (() => {
     { id: 'deep',       name: 'Deep pits',        cost: { embers: 50000 }, req: 'tongs', desc: 'The ember pit sweet spot is 50% wider.' },
     { id: 'hotblast',   name: 'Hot blast',        cost: { embers: 90000, wood: 8000 }, req: 'waterwheel', desc: 'Hearths give 50% more heat.' },
     { id: 'bloom',      name: 'Ember bloom',      cost: { embers: 220000 }, req: 'deep', desc: 'Ember pits ×4.' },
-    { id: 'forge',      name: 'Kindle the Forge', cost: { embers: 1000000, wood: 20000 }, req: 'bloom', goal: true,
-      desc: 'Light the great forge. This is the end of milestone 1.' },
+    { id: 'forge',      name: 'Kindle the Forge', cost: { embers: 1000000, wood: 20000 }, req: 'bloom',
+      desc: 'Light the great forge. Reveals the ore in the floor and unlocks mines and smelters.' },
+    { id: 'dampers',    name: 'Dampers',          cost: { copper: 12 },               req: 'forge', desc: 'Hearths beside a smelter tend themselves, holding it near its melting point.' },
+    { id: 'tinplate',   name: 'Tin-lined kilns',  cost: { tin: 40 },                  req: 'forge', desc: 'Charcoal kilns ×2.' },
+    { id: 'copperflue', name: 'Copper flues',     cost: { copper: 40 },               req: 'forge', desc: 'Flue vents draw twice the heat.' },
+    { id: 'wheels',     name: 'Copper-bound wheels', cost: { copper: 60, tin: 30 },   req: 'forge', desc: 'Carters walk 30% faster.' },
+    { id: 'grates',     name: 'Iron grates',      cost: { iron: 40 },                 req: 'forge', desc: 'Hearths give 30% more heat for the same wood.' },
+    { id: 'irontools',  name: 'Iron tools',       cost: { iron: 80, embers: 1e6 },     req: 'grates', desc: 'Woodcutters and miners ×2.' },
+    { id: 'crucible',   name: 'Ember crucibles',  cost: { copper: 120, tin: 60, embers: 2e6 }, req: 'forge', desc: 'Ember pits ×2.' },
+    { id: 'anvil',      name: 'Cast the Great Anvil', cost: { iron: 250, copper: 200, tin: 120, embers: 4e6 }, req: 'forge', goal: true,
+      desc: 'Cast the anvil the old wrights worked on. This is the end of milestone 2a.' },
   ];
   const UMAP = Object.fromEntries(U.map(u => [u.id, u]));
   const EXPAND = [400, 4000, 40000, 250000];
@@ -265,17 +286,46 @@ const Sim = (() => {
   }
 
   // f is the building's wood store: a woodcutter's pile, or a hearth's or kiln's fuel.
-  function place(s, i, t) { s.cells[i].b = { t, l: 1, th: 1, cr: 0, f: 0 }; }
+  function place(s, i, t) {
+    const b = s.cells[i].b = { t, l: 1, th: 1, cr: 0, f: 0 };
+    if (t === 'mine') b.m = s.veins[i];
+    if (t === 'smelter') { b.m = 'copper'; b.o = 0; }
+  }
+
+  // Ore veins, fixed by the seed. Tin and copper lie near the middle, iron deeper in the rock.
+  function makeVeins(seed) {
+    let r = (seed ^ 0x5bd1e995) | 0;
+    const rnd = () => { r = (r + 0x6D2B79F5) | 0; let t = Math.imul(r ^ (r >>> 15), r | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const v = new Array(N * N).fill('');
+    const keep = new Set([idx(5, 5), idx(6, 5), idx(7, 7)]);
+    const ringOf = i => { const x = i % N, y = (i / N) | 0; return Math.max(4 - x, x - 7, 4 - y, y - 7, 0); };
+    const spec = { tin: [1, 2, 2], copper: [0, 3, 3], iron: [2, 4, 3] };
+    for (const m of METALS) {
+      const [lo, hi, k] = spec[m];
+      for (let c = 0; c < k; c++) {
+        for (let tries = 0; tries < 60; tries++) {
+          const i = Math.floor(rnd() * N * N), rg = ringOf(i);
+          if (rg < lo || rg > hi || v[i] || keep.has(i)) continue;
+          v[i] = m;
+          for (const j of NB[i]) if (j >= 0 && !v[j] && !keep.has(j) && rnd() < 0.55) v[j] = m;
+          break;
+        }
+      }
+    }
+    return v;
+  }
 
   function newState(seed) {
     const s = {
       v: VERSION, seed: (seed ?? Math.floor(Math.random() * 2 ** 31)) | 0, t: 0,
       embers: 10, wood: 5, totalEmbers: 10, totalWood: 0, ring: 0, cells: [], carts: [], up: {}, charge: 0,
+      tin: 0, copper: 0, iron: 0, ores: { tin: 0, copper: 0, iron: 0 }, totalBars: { tin: 0, copper: 0, iron: 0 }, veins: null,
       rate: { embers: 0, wood: 0 }, prod: { embers: 0, wood: 0, burn: 0 },
       stats: { cracks: 0, hottest: AMB, taps: 0, pumps: 0 }, ms: {}, done: false, events: [], _msT: 0,
       tut: { i: 0, seen: {}, off: false }, // tutorial progress; the simulation never reads it
     };
     for (let i = 0; i < N * N; i++) s.cells.push({ T: AMB, b: null });
+    s.veins = makeVeins(s.seed);
     place(s, idx(5, 5), 'hearth');
     s.cells[idx(5, 5)].b.f = 15;
     place(s, idx(6, 5), 'pit');
@@ -296,26 +346,29 @@ const Sim = (() => {
   const upVisible = (s, u) => !s.up[u.id] && (!u.req || s.up[u.req]) && s.totalEmbers >= (u.cost.embers || 0) * 0.25;
 
   const maxT = (s, t) => B[t].maxT + (s.up.fireclay && (t === 'pit' || t === 'lodge') ? 150 : 0);
-  const pitMult = s => (s.up.clay ? 2 : 1) * (s.up.tongs ? 3 : 1) * (s.up.bloom ? 4 : 1);
-  const lodgeMult = s => (s.up.axes ? 2 : 1);
+  const pitMult = s => (s.up.clay ? 2 : 1) * (s.up.tongs ? 3 : 1) * (s.up.bloom ? 4 : 1) * (s.up.crucible ? 2 : 1);
+  const lodgeMult = s => (s.up.axes ? 2 : 1) * (s.up.irontools ? 2 : 1);
+  const mineMult = s => (s.up.irontools ? 2 : 1);
   const pitWidth = s => B.pit.width * (s.up.deep ? 1.5 : 1);
   const pitEff = (s, T) => { const d = (T - B.pit.ideal) / pitWidth(s); return Math.exp(-d * d); };
   const kilnEff = (s, T) => { const d = (T - B.kiln.ideal) / B.kiln.width; return Math.exp(-d * d); };
   const kilnBurn = b => B.kiln.burn * b.l * b.th;
+  const meltEff = (m, T) => { const d = (T - MELT[m].t) / MELT[m].w; return Math.exp(-d * d); };
+  const mineEff = T => T <= B.mine.cool ? 1 : Math.max(0.25, 1 - 0.75 * (T - B.mine.cool) / 450);
   const lodgeEff = (s, T) => T <= B.lodge.cool ? 1 : Math.max(0.1, 1 - (T - B.lodge.cool) / 300);
   const lvlF = l => 1 + 0.6 * (l - 1);
-  const hearthHeat = (s, b) => B.hearth.emit * lvlF(b.l) * b.th * (s.up.hotblast ? 1.5 : 1);
+  const hearthHeat = (s, b) => B.hearth.emit * lvlF(b.l) * b.th * (s.up.hotblast ? 1.5 : 1) * (s.up.grates ? 1.3 : 1);
   const hearthBurn = (s, b) => B.hearth.burn * lvlF(b.l) * b.th * (s.up.seasoned ? 0.65 : 1);
-  const ventCool = b => B.vent.cool * (1 + 0.5 * (b.l - 1));
+  const ventCool = (b, s) => B.vent.cool * (1 + 0.5 * (b.l - 1)) * (s && s.up.copperflue ? 2 : 1);
   const cond = b => !b ? 1 : b.cr ? 0.3 : B[b.t].cond;
 
   // ---- wood logistics ----
   const isFire = b => b && (b.t === 'hearth' || b.t === 'kiln');
-  const storeCap = b => b.t === 'hearth' ? 20 * lvlF(b.l) : b.t === 'kiln' ? 30 * b.l : b.t === 'lodge' ? 12 * b.l : 0;
+  const storeCap = b => b.t === 'hearth' ? 20 * lvlF(b.l) : b.t === 'kiln' ? 30 * b.l : b.t === 'lodge' ? 12 * b.l : b.t === 'mine' || b.t === 'smelter' ? 10 * b.l : 0;
   const cartCap = s => 6 * (s.up.barrows ? 2 : 1) * (s.up.oxcarts ? 2.5 : 1);
   const carters = b => b.l + 1;
   // Carters walk 2.2 tiles a second on cool ground and slow down as the floor heats up.
-  const cartSpeed = (T, s) => 2.2 * (s && s.up.cobbles ? 1.4 : 1) / (1 + Math.max(0, T - 150) / 200);
+  const cartSpeed = (T, s) => 2.2 * (s && s.up.cobbles ? 1.4 : 1) * (s && s.up.wheels ? 1.3 : 1) / (1 + Math.max(0, T - 150) / 200);
   const lit = b => !b.cr && b.th > 0 && b.f > 0.01;
 
   // How well the building on tile i is working right now, 0..1 (null for buildings with no output).
@@ -327,6 +380,8 @@ const Sim = (() => {
     if (b.t === 'lodge') return lodgeEff(s, c.T);
     if (b.t === 'hearth') return lit(b) ? b.th : 0;
     if (b.t === 'kiln') return lit(b) ? kilnEff(s, c.T) * b.th : 0;
+    if (b.t === 'mine') return mineEff(c.T);
+    if (b.t === 'smelter') return b.f > 0.01 ? meltEff(b.m, c.T) : 0;
     return null;
   }
   function output(s, i) {
@@ -334,7 +389,9 @@ const Sim = (() => {
     if (!b || b.cr) return 0;
     if (b.t === 'pit') return B.pit.rate * b.l * pitMult(s) * pitEff(s, c.T);
     if (b.t === 'lodge') return B.lodge.rate * b.l * lodgeMult(s) * lodgeEff(s, c.T);
-    if (b.t === 'kiln') return lit(b) ? B.kiln.rate * b.l * b.th * pitMult(s) * kilnEff(s, c.T) : 0;
+    if (b.t === 'kiln') return lit(b) ? B.kiln.rate * b.l * b.th * pitMult(s) * kilnEff(s, c.T) * (s.up.tinplate ? 2 : 1) : 0;
+    if (b.t === 'mine') return B.mine.rate * b.l * mineMult(s) * mineEff(c.T);
+    if (b.t === 'smelter') return b.f > 0.01 ? B.smelter.rate * b.l * meltEff(b.m, c.T) / 2 : 0;
     return 0;
   }
   function bellowsMult(s, i) {
@@ -347,6 +404,8 @@ const Sim = (() => {
     return m;
   }
 
+  const damped = (s, i) => !!s.up.dampers && s.cells[i].b && s.cells[i].b.t === 'hearth' && NB[i].some(j => j >= 0 && unlocked(s, j) && s.cells[j].b && s.cells[j].b.t === 'smelter' && !s.cells[j].b.cr);
+
   function crack(s, i) {
     const c = s.cells[i];
     c.b.cr = 1e-6;
@@ -358,6 +417,32 @@ const Sim = (() => {
     s.events.push({ k: 'crack', i, t: c.b.t });
   }
 
+  // ---- goods and carting ----
+  // A good is 'wood', 'ore:<metal>' or 'bar:<metal>'. The yard (at the huts) holds every good.
+  function yardHas(s, g) { if (g === 'wood') return s.wood; const [k, m] = g.split(':'); return k === 'ore' ? s.ores[m] : s[m]; }
+  function yardAdd(s, g, a) {
+    if (!(a > 0)) return;
+    if (g === 'wood') { s.wood += a; return; }
+    const [k, m] = g.split(':');
+    if (k === 'ore') s.ores[m] += a; else { s[m] += a; s.totalBars[m] += a; }
+  }
+  // What a building hands out (and from which store), and what it takes in.
+  function makes(b) {
+    if (!b || b.cr) return null;
+    if (b.t === 'lodge') return 'wood';
+    if (b.t === 'mine') return 'ore:' + b.m;
+    if (b.t === 'smelter') return 'bar:' + b.m;
+    return null;
+  }
+  const outStore = b => b.t === 'smelter' ? 'o' : 'f';
+  const outCap = b => b.t === 'smelter' ? 6 * b.l : storeCap(b);
+  function takes(b) {
+    if (!b || b.cr) return null;
+    if (isFire(b)) return b.th > 0 ? 'wood' : null;
+    if (b.t === 'smelter') return 'ore:' + b.m;
+    return null;
+  }
+
   // Keep each hut's carters in step with its level. Carters of a demolished hut drop their load in the yard.
   function syncCarts(s) {
     const want = new Map();
@@ -365,11 +450,11 @@ const Sim = (() => {
     const have = new Map();
     s.carts = s.carts.filter(c => {
       const w = want.get(c.h) || 0, h = have.get(c.h) || 0;
-      if (h >= w) { s.wood += c.load; return false; }
+      if (h >= w) { yardAdd(s, c.g || 'wood', c.load); return false; }
       have.set(c.h, h + 1); return true;
     });
     for (const [h, w] of want) for (let k = have.get(h) || 0; k < w; k++) {
-      s.carts.push({ h, x: h % N, y: (h / N) | 0, px: h % N, py: (h / N) | 0, path: [], load: 0, job: null, wait: k * 0.7 });
+      s.carts.push({ h, x: h % N, y: (h / N) | 0, px: h % N, py: (h / N) | 0, path: [], load: 0, g: 'wood', job: null, wait: k * 0.7 });
     }
   }
 
@@ -394,13 +479,14 @@ const Sim = (() => {
   }
   const manhattan = (a, b) => Math.abs(a % N - b % N) + Math.abs(((a / N) | 0) - ((b / N) | 0));
   const cartTile = c => Math.round(c.y) * N + Math.round(c.x);
-  // A fire can be fed from any tile next to it; carters don't stand in the flames.
+  // Fires and smelters are worked from the tiles beside them; carters don't stand in the flames.
   function goalTiles(s, c, g) {
     const b = s.cells[g].b;
-    if (c.job.stage === 'put' && isFire(b)) { const t = [g]; for (const j of NB[g]) if (j >= 0 && unlocked(s, j)) t.push(j); return t; }
+    if (b && (isFire(b) || b.t === 'smelter')) { const t = [g]; for (const j of NB[g]) if (j >= 0 && unlocked(s, j)) t.push(j); return t; }
     return [g];
   }
 
+  // Pick the most useful trip. Lower score wins: feeding a fire beats feeding a smelter beats clearing a pile.
   function assign(s, c) {
     const cap = cartCap(s), here = cartTile(c), n = N * N;
     const incoming = new Map(), outgoing = new Map();
@@ -409,40 +495,35 @@ const Sim = (() => {
       if (o.job.dst >= 0) incoming.set(o.job.dst, (incoming.get(o.job.dst) || 0) + (o.load || cap));
       if (o.job.stage === 'get' && o.job.src >= 0) outgoing.set(o.job.src, (outgoing.get(o.job.src) || 0) + cap);
     }
-    // The fire most in need, a little biased towards nearby ones.
-    let dst = -1, best = Infinity;
+    const avail = i => { const b = s.cells[i].b; return b[outStore(b)] - (outgoing.get(i) || 0); };
+    let best = null, bv = Infinity;
     for (let i = 0; i < n; i++) {
-      const b = s.cells[i].b;
-      if (!isFire(b) || b.cr || b.th === 0 || !unlocked(s, i)) continue;
+      const b = s.cells[i].b, g = takes(b);
+      if (!g || !unlocked(s, i)) continue;
       const fill = (b.f + (incoming.get(i) || 0)) / storeCap(b);
       if (fill >= 0.6) continue;
-      const v = fill + manhattan(here, i) * 0.02;
-      if (v < best) { best = v; dst = i; }
-    }
-    const avail = i => s.cells[i].b.f - (outgoing.get(i) || 0);
-    if (dst >= 0) {
-      let src = null, bs = Infinity;
-      for (let i = 0; i < n; i++) {
-        const b = s.cells[i].b;
-        if (!b || b.t !== 'lodge' || !unlocked(s, i) || avail(i) < 1) continue;
-        const v = manhattan(here, i) + manhattan(i, dst) - Math.min(avail(i), cap) * 0.15;
-        if (v < bs) { bs = v; src = i; }
+      let src = null, sv = Infinity;
+      for (let j = 0; j < n; j++) {
+        const p = s.cells[j].b;
+        if (makes(p) !== g || !unlocked(s, j) || avail(j) < 1) continue;
+        const v = manhattan(here, j) + manhattan(j, i) - Math.min(avail(j), cap) * 0.15;
+        if (v < sv) { sv = v; src = j; }
       }
-      if (s.wood >= 1) { const v = manhattan(here, c.h) + manhattan(c.h, dst) + 1; if (v < bs) { bs = v; src = -1; } }
-      if (src !== null) { c.job = { stage: 'get', src, dst }; return; }
+      if (yardHas(s, g) >= 1) { const v = manhattan(here, c.h) + manhattan(c.h, i) + 1; if (v < sv) { sv = v; src = -1; } }
+      if (src === null) continue;
+      const v = fill * 10 + sv * 0.2 + (g === 'wood' ? 0 : 4);
+      if (v < bv) { bv = v; best = { stage: 'get', src, dst: i, g }; }
     }
-    // Nothing hungry: clear the fullest woodpile into the yard.
-    let src = -1, bs = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const b = s.cells[i].b;
-      if (!b || b.t !== 'lodge' || !unlocked(s, i)) continue;
-      const a = avail(i);
-      if (a < Math.min(cap, storeCap(b) * 0.5)) continue;
-      const v = a / storeCap(b) - manhattan(here, i) * 0.02;
-      if (v > bs) { bs = v; src = i; }
+    for (let j = 0; j < n; j++) {
+      const p = s.cells[j].b, g = makes(p);
+      if (!g || !unlocked(s, j)) continue;
+      const a = avail(j);
+      if (a < Math.min(cap, outCap(p) * 0.5)) continue;
+      const v = 12 - (a / outCap(p)) * 4 + manhattan(here, j) * 0.2;
+      if (v < bv) { bv = v; best = { stage: 'get', src: j, dst: -1, g }; }
     }
-    if (src >= 0) { c.job = { stage: 'get', src, dst: -1 }; return; }
-    if (here !== c.h) c.job = { stage: 'home', src: -1, dst: -1 };
+    if (best) { c.job = best; return; }
+    if (here !== c.h) c.job = { stage: 'home', src: -1, dst: -1, g: c.g };
   }
 
   function moveCarts(s, dt) {
@@ -455,13 +536,16 @@ const Sim = (() => {
         c.path = null;
       }
       const j = c.job;
+      if (!j.g) j.g = c.g || 'wood';
       const g = j.stage === 'get' ? (j.src < 0 ? c.h : j.src) : j.stage === 'home' ? c.h : (j.dst < 0 ? c.h : j.dst);
-      // Drop the job if its building has gone; any load goes to the yard.
+      // Drop the job if its building has gone or changed; any load goes to the yard.
       const gb = s.cells[g].b;
-      const okType = j.stage === 'home' || (g === c.h ? gb && gb.t === 'hut' : j.stage === 'get' ? gb && gb.t === 'lodge' : isFire(gb) && !gb.cr);
+      const okType = j.stage === 'home' || (g === c.h ? gb && gb.t === 'hut' : j.stage === 'get' ? makes(gb) === j.g : takes(gb) === j.g);
       if (!okType) {
-        if (c.load > 0) { c.job = { stage: 'put', src: -1, dst: -1 }; c.path = null; if (!s.cells[c.h].b) { s.wood += c.load; c.load = 0; c.job = null; } }
-        else c.job = null;
+        if (c.load > 0) {
+          if (s.cells[c.h].b) { c.job = { stage: 'put', src: -1, dst: -1, g: c.g }; c.path = null; }
+          else { yardAdd(s, c.g, c.load); c.load = 0; c.job = null; }
+        } else c.job = null;
         continue;
       }
       if (!c.path) {
@@ -482,18 +566,21 @@ const Sim = (() => {
       const cap = cartCap(s);
       if (j.stage === 'home') { c.job = null; c.wait = 1; }
       else if (j.stage === 'get') {
+        if (c.load > 0 && c.g !== j.g) { yardAdd(s, c.g, c.load); c.load = 0; }
         let take;
-        if (j.src < 0) { take = Math.min(cap, s.wood); s.wood -= take; }
-        else { const b = s.cells[j.src].b; take = Math.min(cap, b.f); b.f -= take; }
-        c.load += take;
-        if (c.load < 0.5) { s.wood += c.load; c.load = 0; c.job = null; c.wait = 0.5; }
+        if (j.src < 0) {
+          take = Math.min(cap, yardHas(s, j.g));
+          if (j.g === 'wood') s.wood -= take; else { const [k, m] = j.g.split(':'); if (k === 'ore') s.ores[m] -= take; else s[m] -= take; }
+        } else { const b = s.cells[j.src].b, k = outStore(b); take = Math.min(cap, b[k]); b[k] -= take; }
+        c.load += take; c.g = j.g;
+        if (c.load < 0.5) { yardAdd(s, c.g, c.load); c.load = 0; c.job = null; c.wait = 0.5; }
         else j.stage = 'put';
       } else {
-        if (j.dst < 0) { s.wood += c.load; c.load = 0; c.job = null; }
+        if (j.dst < 0) { yardAdd(s, c.g, c.load); c.load = 0; c.job = null; }
         else {
           const b = s.cells[j.dst].b, give = Math.min(c.load, storeCap(b) - b.f);
           b.f += give; c.load -= give;
-          if (c.load > 0.01) { c.job = { stage: 'put', src: -1, dst: -1 }; }
+          if (c.load > 0.01) c.job = { stage: 'put', src: -1, dst: -1, g: c.g };
           else { c.load = 0; c.job = null; }
         }
       }
@@ -505,6 +592,16 @@ const Sim = (() => {
     s.t += dt;
     s.charge = Math.max(s.up.waterwheel ? 0.5 : 0, s.charge - 0.04 * dt);
 
+    // Dampers: hearths beside a smelter open or close to hold it near its melting point.
+    if (s.up.dampers) for (let i = 0; i < n; i++) {
+      const b = cells[i].b;
+      if (!b || b.t !== 'smelter' || b.cr || !m[i]) continue;
+      const err = (cells[i].T - MELT[b.m].t) / MELT[b.m].w;
+      for (const j of NB[i]) {
+        const h = j >= 0 && m[j] ? cells[j].b : null;
+        if (h && h.t === 'hearth' && !h.cr) h.th = Math.min(1, Math.max(0, h.th - 0.25 * err * dt));
+      }
+    }
     // Each fire burns from its own store. FUEL[i] is the share of its full burn it managed this tick.
     let burned = 0;
     for (let i = 0; i < n; i++) {
@@ -527,7 +624,7 @@ const Sim = (() => {
       if (b && !b.cr) {
         if (b.t === 'hearth') d += hearthHeat(s, b) * FUEL[i] * bellowsMult(s, i);
         else if (b.t === 'kiln') d += B.kiln.emit * b.l * b.th * FUEL[i];
-        else if (b.t === 'vent') loss += ventCool(b);
+        else if (b.t === 'vent') loss += ventCool(b, s);
       }
       d -= loss * (T - AMB);
       const ci = cond(b);
@@ -561,7 +658,16 @@ const Sim = (() => {
         const cut = Math.min(B.lodge.rate * b.l * lm * lodgeEff(s, c.T) * dt, storeCap(b) - b.f);
         if (cut > 0) { b.f += cut; pw += cut / dt; }
       }
-      else if (b.t === 'kiln') pe += B.kiln.rate * b.l * b.th * pm * kilnEff(s, c.T) * FUEL[i];
+      else if (b.t === 'kiln') pe += B.kiln.rate * b.l * b.th * pm * kilnEff(s, c.T) * FUEL[i] * (s.up.tinplate ? 2 : 1);
+      else if (b.t === 'mine') {
+        const dug = Math.min(B.mine.rate * b.l * mineMult(s) * mineEff(c.T) * dt, storeCap(b) - b.f);
+        if (dug > 0) b.f += dug;
+      }
+      else if (b.t === 'smelter') {
+        // Two ore make one ingot; the smelter stops when its ingot rack is full.
+        const melt = Math.min(b.f, B.smelter.rate * b.l * meltEff(b.m, c.T) * dt, (outCap(b) - b.o) * 2);
+        if (melt > 0) { b.f -= melt; b.o += melt / 2; }
+      }
       const mx = maxT(s, b.t);
       if (c.T > mx) { const over = (c.T - mx) / 100 + 1; if (rand(s) < 0.012 * over * over * dt) crack(s, i); }
     }
@@ -591,6 +697,9 @@ const Sim = (() => {
     ['ring3', 'Floor 10×10', s => s.ring >= 3],
     ['ring4', 'Floor 12×12', s => s.ring >= 4],
     ['forge', 'The Forge is kindled', s => !!s.up.forge],
+    ['bar', 'First ingot', s => s.totalBars.tin + s.totalBars.copper + s.totalBars.iron >= 1],
+    ['iron', 'First iron', s => s.totalBars.iron >= 1],
+    ['anvil', 'The Great Anvil', s => !!s.up.anvil],
   ];
   function milestones(s) {
     for (const [id, name, f] of MS) if (!(id in s.ms) && f(s)) { s.ms[id] = s.t; s.events.push({ k: 'ms', id, name }); }
@@ -603,6 +712,7 @@ const Sim = (() => {
       case 'build': {
         const { t, i } = a;
         if (!B[t] || !buildable(s, t) || !unlocked(s, i) || s.cells[i].b) return false;
+        if (t === 'mine' && !s.veins[i]) return false;
         const c = buildCost(s, t); if (!can(s, c)) return false;
         pay(s, c); place(s, i, t); if (t === 'hut') syncCarts(s); return true;
       }
@@ -620,8 +730,16 @@ const Sim = (() => {
       }
       case 'throttle': {
         const b = s.cells[a.i].b;
-        if (!b || (b.t !== 'hearth' && b.t !== 'kiln') || ![0, 0.5, 1].includes(a.v)) return false;
+        if (!b || (b.t !== 'hearth' && b.t !== 'kiln') || ![0, 0.5, 1].includes(a.v) || damped(s, a.i)) return false;
         b.th = a.v; return true;
+      }
+      case 'metal': {
+        const b = s.cells[a.i].b;
+        if (!b || b.t !== 'smelter' || !METALS.includes(a.m) || b.m === a.m) return false;
+        // Ore of the old metal goes back to the yard; finished ingots stay on the rack for the carters.
+        yardAdd(s, 'ore:' + b.m, b.f); b.f = 0;
+        yardAdd(s, 'bar:' + b.m, b.o); b.o = 0;
+        b.m = a.m; return true;
       }
       case 'demolish': {
         const b = s.cells[a.i].b; if (!b) return false;
@@ -699,6 +817,14 @@ const Sim = (() => {
       s.carts = [];
       delete s.fuel; delete s.kfuel;
     }
+    if (o.v < 3) {
+      // v3: ore, smelting and metals.
+      Object.assign(s, { tin: 0, copper: 0, iron: 0, ores: { tin: 0, copper: 0, iron: 0 }, totalBars: { tin: 0, copper: 0, iron: 0 } });
+      s.veins = makeVeins(s.seed);
+      for (const c of s.carts) { c.g = 'wood'; if (c.job) c.job.g = 'wood'; }
+      if (s.up.forge && !s.done) s.done = false;
+    }
+    if (!Array.isArray(s.veins) || s.veins.length !== N * N) s.veins = makeVeins(s.seed);
     if (!Array.isArray(s.carts)) s.carts = [];
     syncCarts(s);
     s.v = VERSION;
@@ -709,6 +835,7 @@ const Sim = (() => {
     N, DT, AMB, VERSION, B, ORDER, U, UMAP, EXPAND, NB, MS,
     newState, step, act, advance, fastForward, serialize, deserialize,
     idx, unlocked, bounds, count, buildCost, levelCost, repairCost, expandCost, can, buildable, upVisible,
+    METALS, MELT, meltEff, damped, mineEff, makes, takes, outCap, yardHas,
     maxT, pitEff, lodgeEff, kilnEff, kilnBurn, pitMult, lodgeMult, storeCap, cartCap, carters, cartSpeed, lit, isFire, pitWidth, efficiency, output, bellowsMult, hearthBurn, hearthHeat,
   };
 })();
@@ -743,7 +870,8 @@ function fmt(n) {
   const v = n / 10 ** (g * 3);
   return (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + SUF[g];
 }
-function fmtCost(c) { return Object.entries(c).map(([k, v]) => fmt(v) + (k === 'wood' ? ' wood' : '')).join(' + '); }
+const METAL_COL = { tin: '#c9d2da', copper: '#e07b4c', iron: '#7d8ea3' };
+function fmtCost(c) { return Object.entries(c).map(([k, v]) => fmt(v) + (k === 'embers' ? '' : ' ' + k)).join(' + '); }
 function fmtTime(t) {
   t = Math.floor(t);
   const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
@@ -885,6 +1013,29 @@ function drawIcon(b, x, y, ts, i, now) {
       ctx.beginPath(); ctx.moveTo(cx + r * 0.7, cy + r * 0.23); ctx.lineTo(cx + r * 0.7, cy + r * 0.87); ctx.moveTo(cx + r * 0.38, cy + r * 0.55); ctx.lineTo(cx + r * 1.02, cy + r * 0.55); ctx.stroke();
       break;
     }
+    case 'mine': {
+      ctx.fillStyle = '#1a1412'; ctx.strokeStyle = '#5c4636';
+      ctx.fillRect(cx - r * 0.7, cy - r * 0.1, r * 1.4, r * 0.9); ctx.strokeRect(cx - r * 0.7, cy - r * 0.1, r * 1.4, r * 0.9);
+      ctx.strokeStyle = '#8a6a48'; ctx.lineWidth = Math.max(1.5, ts * 0.05);
+      ctx.beginPath(); ctx.moveTo(cx - r * 0.75, cy + r * 0.1); ctx.lineTo(cx, cy - r * 0.95); ctx.lineTo(cx + r * 0.75, cy + r * 0.1); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy - r * 0.75, r * 0.22, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = METAL_COL[b.m];
+      const n = Math.ceil(b.f / Sim.storeCap(b) * 4);
+      for (let k = 0; k < n; k++) { ctx.beginPath(); ctx.arc(cx - r * 0.45 + k * r * 0.3, cy + r * 0.55, r * 0.17, 0, Math.PI * 2); ctx.fill(); }
+      break;
+    }
+    case 'smelter': {
+      const e = b.cr ? 0 : Sim.efficiency(S, i) || 0;
+      ctx.fillStyle = '#4a4440'; ctx.strokeStyle = '#1a1614';
+      ctx.beginPath(); ctx.moveTo(cx - r * 0.85, cy + r * 0.85); ctx.lineTo(cx - r * 0.5, cy - r * 0.9); ctx.lineTo(cx + r * 0.5, cy - r * 0.9); ctx.lineTo(cx + r * 0.85, cy + r * 0.85); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = METAL_COL[b.m]; ctx.fillRect(cx - r * 0.5, cy - r * 0.95, r, r * 0.22);
+      ctx.fillStyle = e > 0.05 ? `rgba(255,${120 + 110 * e | 0},40,${0.4 + 0.6 * e})` : '#120e0c';
+      ctx.beginPath(); ctx.arc(cx, cy + r * 0.35, r * 0.32, Math.PI, 0); ctx.lineTo(cx + r * 0.32, cy + r * 0.62); ctx.lineTo(cx - r * 0.32, cy + r * 0.62); ctx.closePath(); ctx.fill();
+      const bars = Math.min(3, Math.ceil(b.o / Sim.outCap(b) * 3));
+      ctx.fillStyle = METAL_COL[b.m]; ctx.strokeStyle = '#111'; ctx.lineWidth = 1;
+      for (let k = 0; k < bars; k++) { ctx.fillRect(cx + r * 0.55, cy + r * (0.7 - k * 0.25), r * 0.45, r * 0.18); ctx.strokeRect(cx + r * 0.55, cy + r * (0.7 - k * 0.25), r * 0.45, r * 0.18); }
+      break;
+    }
     case 'bellows': {
       const p = 0.75 + 0.25 * S.charge * (0.5 + 0.5 * Math.sin(now / 160));
       ctx.fillStyle = '#8a5a3a'; ctx.strokeStyle = '#3a2615';
@@ -937,7 +1088,12 @@ function drawIcon(b, x, y, ts, i, now) {
     ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
     ctx.fillText(label, x + 2 + ts * 0.05, y + ts - ts * 0.14 - 2);
   }
-  if ((b.t === 'hearth' || b.t === 'kiln') && b.th < 1 && !b.cr) {
+  if (b.t === 'hearth' && !b.cr && Sim.damped(S, i)) {
+    ctx.fillStyle = 'rgba(0,0,0,.6)';
+    ctx.font = `700 ${Math.round(ts * 0.2)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.fillText(Math.round(b.th * 100) + '%', x + ts * 0.06, y + 3);
+  } else if ((b.t === 'hearth' || b.t === 'kiln') && b.th < 1 && !b.cr) {
     ctx.fillStyle = 'rgba(0,0,0,.55)';
     ctx.font = `600 ${Math.round(ts * 0.2)}px system-ui, sans-serif`;
     ctx.textBaseline = 'top';
@@ -957,8 +1113,18 @@ function drawCarts(ts, now) {
     ctx.fillStyle = 'rgba(0,0,0,.35)';
     ctx.beginPath(); ctx.ellipse(x, y + r * 1.5, r * 1.3, r * 0.45, 0, 0, Math.PI * 2); ctx.fill();
     if (c.load > 0) {
-      ctx.fillStyle = '#9a6a3a'; ctx.strokeStyle = '#3a220e'; ctx.lineWidth = 1;
-      for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.ellipse(x + r * 1.1, y + r * (0.9 - k * 0.55) + bob, r * 0.75, r * 0.28, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      const g = c.g || 'wood', m = g.split(':')[1];
+      ctx.strokeStyle = '#2a1a0e'; ctx.lineWidth = 1;
+      if (g === 'wood') {
+        ctx.fillStyle = '#9a6a3a';
+        for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.ellipse(x + r * 1.1, y + r * (0.9 - k * 0.55) + bob, r * 0.75, r * 0.28, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      } else if (g.startsWith('ore')) {
+        ctx.fillStyle = METAL_COL[m];
+        for (const [dx, dy] of [[0.8, 0.8], [1.4, 0.8], [1.1, 0.3]]) { ctx.beginPath(); ctx.arc(x + r * dx, y + r * dy + bob, r * 0.38, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      } else {
+        ctx.fillStyle = METAL_COL[m];
+        for (let k = 0; k < 2; k++) { ctx.fillRect(x + r * 0.5, y + r * (0.7 - k * 0.45) + bob, r * 1.3, r * 0.38); ctx.strokeRect(x + r * 0.5, y + r * (0.7 - k * 0.45) + bob, r * 1.3, r * 0.38); }
+      }
     }
     ctx.fillStyle = '#3d5a80'; ctx.strokeStyle = '#111'; ctx.lineWidth = Math.max(1, ts * 0.025);
     ctx.beginPath(); ctx.ellipse(x, y + r * 0.6 + bob, r * 0.8, r * 0.95, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
@@ -988,6 +1154,17 @@ function draw(now) {
     }
     ctx.fillStyle = rgb(heatRGB(c.T));
     ctx.fillRect(x, y, ts + 0.5, ts + 0.5);
+  }
+  // Ore shows faintly from the start, so players can keep it clear; the Forge's light brings it out.
+  for (let i = 0; i < N * N; i++) {
+    const m = S.veins[i]; if (!m) continue;
+    const x = (i % N) * ts, y = Math.floor(i / N) * ts, open = Sim.unlocked(S, i);
+    ctx.fillStyle = METAL_COL[m]; ctx.globalAlpha = (open ? 0.9 : 0.35) * (S.up.forge ? 1 : 0.4);
+    for (const [fx, fy, fr] of [[0.2, 0.25, 0.07], [0.78, 0.2, 0.05], [0.7, 0.78, 0.07], [0.25, 0.8, 0.05], [0.5, 0.5, 0.04]]) {
+      ctx.beginPath(); ctx.arc(x + fx * ts, y + fy * ts, fr * ts, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    if (armed === 'mine' && open && !S.cells[i].b) { ctx.strokeStyle = METAL_COL[m]; ctx.lineWidth = 2; ctx.strokeRect(x + 2, y + 2, ts - 4, ts - 4); }
   }
   // grid lines
   ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.lineWidth = 1;
@@ -1050,7 +1227,8 @@ cv.addEventListener('click', ev => {
     if (Sim.act(S, { k: 'build', t: armed, i })) {
       sel = i;
       if (!Sim.can(S, Sim.buildCost(S, armed))) armed = null;
-    } else toast('Not enough to build that yet.');
+    } else if (armed === 'mine' && !S.veins[i]) toast('Mines must sit on an ore vein: the coloured speckles.');
+    else toast('Not enough to build that yet.');
   } else {
     sel = sel === i ? -1 : i;
     armed = null;
@@ -1064,7 +1242,15 @@ function setHTML(el, html) { if (cache.get(el) !== html) { cache.set(el, html); 
 
 function goalText() {
   const s = S;
-  if (s.done) return '<b>The Forge is kindled.</b> Milestone 1 is complete; the next layer (materials and alloys) arrives in M2.';
+  if (s.done) return '<b>The Great Anvil is cast.</b> That\u2019s the end of what\u2019s built so far: alloys and recipe discovery come next.';
+  if (s.up.forge) {
+    const need = Sim.METALS.filter(m => !Sim.count(s, 'mine') || ![...Array(N * N).keys()].some(i => s.cells[i].b && s.cells[i].b.t === 'mine' && s.cells[i].b.m === m));
+    if (!Sim.count(s, 'mine')) return 'The Forge shows you the ore in the floor. Build a <b>Mine</b> on a vein: <b>copper</b> is the reddish speckle.';
+    if (!Sim.count(s, 'smelter')) return 'Ore needs melting. Build a <b>Smelter</b> where the floor is near the melting point: copper melts at <b>700°</b>.';
+    if (need.length) return `You have no mine on <b>${need[0]}</b> yet.` + (need[0] === 'iron' ? ' Iron lies deep: expand the floor to reach it.' : '');
+    const a = Sim.UMAP.anvil;
+    return `Goal: <b>Cast the Great Anvil</b> (${fmtCost(a.cost)}). Set each smelter to a metal, and keep it at that metal\u2019s heat.`;
+  }
   if (!Sim.count(s, 'lodge')) return 'Your hearth is burning its last wood. <b>Build a Woodcutter</b> on a cool tile, away from the fire. Your carters will bring the wood.';
   if (coldFires().length && fullPiles().length) return 'Fires are out of wood while woodpiles sit full: your carters can\u2019t keep up. Build another <b>Carter\u2019s hut</b> between them, or level one up.';
   if (coldFires().length) return 'A fire has run out of wood. Build or level a <b>Woodcutter</b>, or another <b>Carter\u2019s hut</b>.';
@@ -1105,7 +1291,8 @@ function infoHTML() {
   }
   const c = S.cells[sel], b = c.b;
   const where = `Tile ${tileName(sel)}`;
-  if (!b) return `<h3>Empty floor <span class="muted">· ${where}</span></h3><dl class="kv"><dt>Temperature</dt><dd id="dynT"></dd></dl><p>Pick a building above to place it here.</p>`;
+  const vein = S.veins[sel] ? `<p>There's <b>${S.veins[sel]}</b> ore in this tile.${S.up.forge ? ' Build a Mine here to dig it.' : ' It can be mined once the Forge is lit, so you might keep it clear.'}</p>` : '';
+  if (!b) return `<h3>Empty floor <span class="muted">· ${where}</span></h3><dl class="kv"><dt>Temperature</dt><dd id="dynT"></dd></dl>${vein}<p>Pick a building above to place it here.</p>`;
   const d = Sim.B[b.t];
   let rows = `<dt>Temperature</dt><dd id="dynT"></dd>`;
   rows += `<dt>Cracks above</dt><dd>${Sim.maxT(S, b.t)}°</dd>`;
@@ -1115,6 +1302,8 @@ function infoHTML() {
   if (b.t === 'kiln') rows += `<dt>Burns</dt><dd id="dynB"></dd>`;
   if (Sim.isFire(b)) rows += `<dt>Fuel store</dt><dd id="dynF"></dd>`;
   if (b.t === 'lodge') rows += `<dt>Woodpile</dt><dd id="dynF"></dd>`;
+  if (b.t === 'mine') rows += `<dt>Vein</dt><dd><i class="dot" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${METAL_COL[b.m]}"></i> ${b.m}</dd><dt>Ore pile</dt><dd id="dynF"></dd>`;
+  if (b.t === 'smelter') rows += `<dt>Melts</dt><dd>${b.m} at ${Sim.MELT[b.m].t}° ± ${Sim.MELT[b.m].w}°</dd><dt>Working at</dt><dd id="dynE"></dd><dt>Ore waiting</dt><dd id="dynF"></dd><dt>Ingots ready</dt><dd id="dynBars"></dd>`;
   if (b.t === 'hut') rows += `<dt>Carters</dt><dd id="dynC"></dd><dt>Each carries</dt><dd>${Sim.cartCap(S)} wood</dd>`;
   if (b.t === 'hearth') rows += `<dt>Heat out</dt><dd id="dynH"></dd>`;
   let btns = '';
@@ -1124,7 +1313,9 @@ function infoHTML() {
     const lc = Sim.levelCost(S, sel);
     btns += `<button class="primary ${Sim.can(S, lc) ? '' : 'off'}" data-act="level">Level ${b.l + 1} · ${fmtCost(lc)}</button>`;
   }
-  if (b.t === 'hearth' || b.t === 'kiln') {
+  if (b.t === 'smelter' && !b.cr) for (const m of Sim.METALS) btns += `<button data-act="metal" data-m="${m}" class="${b.m === m ? 'sel' : ''}">${m[0].toUpperCase() + m.slice(1)} ${Sim.MELT[m].t}°</button>`;
+  if (b.t === 'hearth' && Sim.damped(S, sel)) btns += `<span class="muted" style="font-size:13px;align-self:center">Damper: tending the smelter next door</span>`;
+  else if (b.t === 'hearth' || b.t === 'kiln') {
     for (const [v, l] of [[1, 'Full'], [0.5, 'Half'], [0, 'Off']]) btns += `<button data-act="th" data-v="${v}" class="${b.th === v ? 'sel' : ''}">${l}</button>`;
   }
   btns += `<button data-act="demolish">Demolish</button>`;
@@ -1139,7 +1330,8 @@ function renderInfo() {
   const dT = $('#dynT'); if (dT) dT.textContent = Math.round(c.T) + '°';
   if (!b) return;
   const e = Sim.efficiency(S, sel);
-  const dE = $('#dynE'); if (dE && e !== null) dE.textContent = Math.round(e * 100) + '%';
+  const dE = $('#dynE');
+  if (dE && e !== null) dE.textContent = Math.round(e * 100) + '%' + (b.t === 'smelter' && b.f < 0.01 ? ' · waiting for ore' : b.t === 'smelter' && b.o >= Sim.outCap(b) - 0.01 ? ' · rack full, waiting for a carter' : '');
   const dO = $('#dynO');
   if (dO) dO.textContent = b.t === 'hearth' ? (Sim.lit(b) ? fmt(Sim.hearthBurn(S, b)) : 0) + ' wood/s' : fmt(Sim.output(S, sel)) + (b.t === 'lodge' ? ' wood/s' : ' embers/s');
   const dB = $('#dynB'); if (dB) dB.textContent = (Sim.lit(b) ? fmt(Sim.kilnBurn(b)) : 0) + ' wood/s';
@@ -1148,6 +1340,7 @@ function renderInfo() {
     const cap = Sim.storeCap(b), full = b.f >= cap - 0.01;
     dF.innerHTML = `${fmt(b.f)} / ${fmt(cap)}` + (b.t === 'lodge' && full ? ' <span class="muted">· full: cutting stops until a carter collects</span>' : Sim.isFire(b) && b.f < 0.01 && b.th > 0 ? ' <span style="color:var(--bad)">· empty, waiting for a carter</span>' : '');
   }
+  const dBars = $('#dynBars'); if (dBars) dBars.textContent = `${fmt(b.o)} / ${fmt(Sim.outCap(b))}`;
   const dC = $('#dynC');
   if (dC) { const mine = S.carts.filter(c => c.h === sel); dC.textContent = `${mine.length} (${mine.filter(c => c.job).length} out working)`; }
   const dH = $('#dynH');
@@ -1159,6 +1352,7 @@ $('#info').addEventListener('click', ev => {
   if (a === 'level') { if (!Sim.act(S, { k: 'level', i: sel })) toast('Not enough yet.'); }
   else if (a === 'repair') { if (!Sim.act(S, { k: 'repair', i: sel })) toast('Not enough to repair it yet.'); }
   else if (a === 'th') Sim.act(S, { k: 'throttle', i: sel, v: +btn.dataset.v });
+  else if (a === 'metal') Sim.act(S, { k: 'metal', i: sel, m: btn.dataset.m });
   else if (a === 'demolish') {
     if (btn.dataset.confirm) { Sim.act(S, { k: 'demolish', i: sel }); }
     else { btn.dataset.confirm = '1'; btn.textContent = 'Tap again to demolish'; return; }
@@ -1192,7 +1386,8 @@ $('#tab-upgrades').addEventListener('click', ev => {
   const id = b.dataset.up;
   const ok = id === 'expand' ? Sim.act(S, { k: 'expand' }) : Sim.act(S, { k: 'upgrade', id });
   if (!ok) toast('Not enough yet.');
-  else if (id === 'forge') showDone();
+  else if (id === 'forge') showForge();
+  else if (id === 'anvil') showDone();
   refresh(true);
 });
 
@@ -1216,6 +1411,8 @@ function renderStats() {
 function renderTop() {
   $('#vEmbers').textContent = fmt(S.embers);
   $('#vWood').textContent = fmt(S.wood);
+  $('#metals').classList.toggle('hidden', !S.up.forge);
+  if (S.up.forge) setHTML($('#metals'), Sim.METALS.map(m => `<div class="chip"><i class="dot" style="background:${METAL_COL[m]}"></i>${m[0].toUpperCase() + m.slice(1)} <b style="margin-left:auto">${fmt(S[m])}</b></div>`).join(''));
   const re = $('#rEmbers'), rw = $('#rWood');
   re.textContent = (S.rate.embers >= 0 ? '+' : '') + fmt(S.rate.embers) + '/s';
   const w = S.rate.wood;
@@ -1290,9 +1487,14 @@ function toast(msg, kind = '') {
 }
 function modal(html) { $('#modalBody').innerHTML = html; $('#modal').classList.add('show'); }
 $('#modal').addEventListener('click', ev => { if (ev.target.id === 'modal' || ev.target.closest('[data-close]')) $('#modal').classList.remove('show'); });
+function showForge() {
+  modal(`<h3>The Forge is kindled</h3><p>Milestone 1 done in <b>${fmtTime(S.t)}</b>, with ${S.stats.cracks} cracks along the way.</p>
+    <p>Its light shows what's in the rock: veins of <b style="color:${METAL_COL.tin}">tin</b>, <b style="color:${METAL_COL.copper}">copper</b> and <b style="color:${METAL_COL.iron}">iron</b>. Mine them, smelt them, and cast the Great Anvil.</p>
+    <div class="row"><button class="primary" data-close>To the mines</button></div>`);
+}
 function showDone() {
-  modal(`<h3>The Forge is kindled</h3><p>You finished milestone 1 in <b>${fmtTime(S.t)}</b>, with ${S.stats.cracks} cracks along the way.</p>
-    <p>The next layer (alloys, a crucible and recipe discovery) builds on this floor. Your save carries over. You can keep playing in the meantime.</p>
+  modal(`<h3>The Great Anvil is cast</h3><p>You reached the end of milestone 2a in <b>${fmtTime(S.t)}</b>.</p>
+    <p>Next up: alloys, a crucible and recipe discovery. Your save carries over, and you can keep playing in the meantime.</p>
     <div class="row"><button class="primary" data-close>Keep playing</button></div>`);
 }
 function handleEvents() {
@@ -1440,6 +1642,9 @@ const LESSONS = [
     say: s => { const i = worst(s, 'pit', Sim.pitEff)[0]; const T = Math.round(s.cells[i].T);
       return T < 520 ? `This pit is <b>too cold</b> (${T}°) to make much. Put a hearth next to it, or move it closer to the fire.` : `This pit is <b>too hot</b> (${T}°). Past 520° it makes less, not more. Turn a nearby hearth down to <b>Half</b>.`; },
     target: s => ({ tile: worst(s, 'pit', Sim.pitEff)[0] }) },
+  { id: 'oreseen', after: 'bye', when: s => s.ring >= 1 && s.t > 400,
+    say: () => `See the faint coloured speckles in the floor? That's <b>ore</b>. You can't work it until the Forge is lit, but whatever you build on top of it now, you'll have to pull down later.`,
+    target: s => ({ tile: s.veins.findIndex((m, i) => m && Sim.unlocked(s, i)) }) },
   { id: 'level', after: 'bye', when: s => { const i = firstOf(s, 'pit'); return i >= 0 && Sim.can(s, Sim.levelCost(s, i)); },
     say: () => `You can afford to <b>level up</b> a building. Tap it and press <b>Level</b>. A level-2 pit makes twice what a level-1 pit does, and the floor only has so many tiles.`,
     target: s => ({ tile: firstOf(s, 'pit') }) },
@@ -1473,6 +1678,21 @@ const LESSONS = [
   { id: 'mending', after: 'bye', when: s => !!s.up.mending,
     say: () => `The <b>mending crew</b> fixes cracked buildings for free after 20 seconds. If the tile's still too hot, it'll just crack again, mind.`,
     target: () => null },
+  { id: 'veins', after: 'bye', when: s => !!s.up.forge,
+    say: () => `The Forge is lit, and look: the rock's full of <b>ore</b>. Reddish speckles are <b>copper</b>, pale ones <b>tin</b>, dark grey <b>iron</b>. A <b>Mine</b> has to sit right on a vein. Miners work underground, so they put up with more heat than woodcutters, but past 350° they slow down.`,
+    target: () => ({ el: '[data-build="mine"]' }) },
+  { id: 'smelt', after: 'bye', when: s => Sim.count(s, 'smelter') > 0,
+    say: () => `Each metal melts at its own heat: <b>tin about 320°</b>, <b>copper 700°</b>, <b>iron 920°</b>. Tap the smelter to choose its metal. Iron's hotter than an ember pit can stand, so give it its own corner and <b>wall it off</b>.`,
+    target: s => ({ tile: [...Array(N * N).keys()].find(i => s.cells[i].b && s.cells[i].b.t === 'smelter') ?? -1 }) },
+  { id: 'deepiron', after: 'bye', when: s => !!s.up.forge && Sim.count(s, 'mine') > 0 && !s.veins.some((m, i) => m === 'iron' && Sim.unlocked(s, i)),
+    say: () => `No iron in reach yet. It lies <b>deeper in the rock</b>: you'll need to expand the floor. You can see the faint grey speckles waiting out there.`,
+    target: () => ({ el: '[data-up="expand"]' }), enter: () => setTab('upgrades') },
+  { id: 'dampers', after: 'bye', when: s => !!s.up.dampers,
+    say: () => `<b>Dampers</b> fitted. Every hearth beside a smelter now opens and closes by itself to hold it at its melting point; the number on the hearth shows how hard it's burning. If it sits at 100% and the smelter's still cold, it needs <b>another hearth</b>.`,
+    target: s => ({ tile: [...Array(N * N).keys()].find(i => s.cells[i].b && s.cells[i].b.t === 'smelter') ?? -1 }) },
+  { id: 'anvilgoal', after: 'bye', when: s => s.totalBars.iron >= 1,
+    say: () => `Your first iron! Now: the <b>Great Anvil</b>. It takes iron, copper, tin and a heap of embers. The metal upgrades along the way pay for themselves.`,
+    target: () => ({ el: '[data-up="anvil"]' }), enter: () => setTab('upgrades') },
   { id: 'forge', after: 'bye', when: s => Sim.upVisible(s, Sim.UMAP.forge), enter: () => setTab('upgrades'),
     say: () => `There it is: <b>Kindle the Forge</b>. It needs a million embers and <b>20K wood in hand</b>. If you have kilns, turn some off while you save, or they'll burn it.`,
     target: () => ({ el: '[data-up="forge"]' }) },
