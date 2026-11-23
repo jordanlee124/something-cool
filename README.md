@@ -68,6 +68,8 @@ The core is a **heat grid**. Hearths burn wood and heat their tile, heat spreads
 - Hearths and kilns can be run at full, half or off. Buildings level up. Overheated buildings crack, dump heat into their neighbours (which can crack them too) and need repairing.
 - **Expanding the floor** moves the cold edge outward, so the core runs hotter after every expansion and the layout has to be rethought.
 
+**Wren, the forgemaster**, teaches the game. A ten-step walkthrough points at one button or tile at a time (a yellow glow, or a bouncing marker on the floor) and moves on when you do the thing. The game is paused during the two opening explanations. After that, Wren turns up once for each new mechanic when it first matters: a tile about to crack, a crack, hearths running out of wood, a pit too hot or too cold, a new building unlocked, the first expansion, the Forge. Urgent warnings cut in front of ordinary tips. Tapping Wren gives advice on what to do next. Progress is kept in the save, and Settings can replay the tutorial or turn the pop-ups off.
+
 Milestone 1 ends when you kindle the Forge (1M embers and 20K wood), about 40 minutes of good play. The Efficiency overlay shows which buildings are running well. Offline progress catches up on up to 8 hours.
 
 ### Balance harness
