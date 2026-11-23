@@ -122,7 +122,7 @@ textarea { width: 100%; height: 90px; font: 12px ui-monospace, monospace; backgr
   <header><h1>Ember<span>wright</span></h1><div class="clock" id="clock">0:00</div></header>
   <div class="res">
     <div class="box"><div class="lab">Embers</div><div class="val" id="vEmbers">0</div><div class="rate" id="rEmbers">+0/s</div></div>
-    <div class="box"><div class="lab">Wood</div><div class="val" id="vWood">0</div><div class="rate" id="rWood">+0/s</div></div>
+    <div class="box"><div class="lab">Wood · yard</div><div class="val" id="vWood">0</div><div class="rate" id="rWood">+0/s</div></div>
   </div>
   <div style="height:10px"></div>
   <div class="board"><canvas id="grid" width="600" height="600" aria-label="Forge floor"></canvas></div>
@@ -188,7 +188,7 @@ textarea { width: 100%; height: 90px; font: 12px ui-monospace, monospace; backgr
 // The simulation: plain data in, plain data out. No DOM. balance.js runs this same code under Node.
 const Sim = (() => {
   'use strict';
-  const N = 12, DT = 0.25, AMB = 20, DIFF = 0.2, LOSS = 0.02, VERSION = 1;
+  const N = 12, DT = 0.25, AMB = 20, DIFF = 0.2, LOSS = 0.02, VERSION = 2;
 
   const B = {
     pit:     { name: 'Ember pit',  cost: { embers: 15 },            growth: 1.30, maxT: 900,  cond: 1,    ideal: 520, width: 240, rate: 1, levels: 12,
@@ -199,6 +199,8 @@ const Sim = (() => {
                desc: 'Cuts wood. Works slower above 120° and may crack above 450°.' },
     kiln:    { name: 'Charcoal kiln', cost: { embers: 400, wood: 250 }, growth: 1.35, maxT: 800, cond: 1, ideal: 380, width: 140, burn: 1.5, rate: 0.6, emit: 70, unlock: 'charcoal', levels: 8,
                desc: 'Burns wood into embers and gives off some heat. Best near 380°; it burns its wood whatever the temperature.' },
+    hut:     { name: "Carter's hut", cost: { embers: 25 }, growth: 1.7, maxT: 500, cond: 1, levels: 6,
+               desc: 'Home to carters, who carry wood from woodcutters to the fires that need it. Each level adds a carter. Spare wood goes to the yard here.' },
     bellows: { name: 'Bellows',    cost: { embers: 250, wood: 60 }, growth: 1.60, maxT: 950,  cond: 1,    boost: 1.0, unlock: 'bellows', levels: 1,
                desc: 'While pumped, adds up to +100% heat to every hearth next to it.' },
     wall:    { name: 'Firebrick',  cost: { embers: 60, wood: 20 },  growth: 1.18, maxT: 2400, cond: 0.06, unlock: 'firebrick', levels: 1,
@@ -206,12 +208,13 @@ const Sim = (() => {
     vent:    { name: 'Flue vent',  cost: { embers: 120, wood: 30 }, growth: 1.35, maxT: 1800, cond: 1,    cool: 0.35, unlock: 'vents', levels: 6,
                desc: 'Draws heat out of its tile, and so out of the tiles around it.' },
   };
-  const ORDER = ['pit', 'hearth', 'lodge', 'kiln', 'bellows', 'wall', 'vent'];
+  const ORDER = ['pit', 'hearth', 'lodge', 'hut', 'kiln', 'bellows', 'wall', 'vent'];
 
   // Upgrades. `req` must be bought first. Each one is shown once total embers reach a quarter of its ember cost.
   const U = [
     { id: 'axes',       name: 'Sharpened axes',   cost: { embers: 40 },                 desc: 'Woodcutters ×2.' },
     { id: 'clay',       name: 'Clay-lined pits',  cost: { embers: 120 },                desc: 'Ember pits ×2.' },
+    { id: 'barrows',    name: 'Wheelbarrows',     cost: { embers: 220 },                desc: 'Carters carry twice as much wood per trip.' },
     { id: 'bellows',    name: 'Bellows',          cost: { embers: 300 },                desc: 'Unlocks bellows. Pump them by hand to boost nearby hearths.' },
     { id: 'seasoned',   name: 'Seasoned wood',    cost: { embers: 700, wood: 150 },     desc: 'Hearths burn 35% less wood.' },
     { id: 'firebrick',  name: 'Firebrick',        cost: { embers: 900 },                desc: 'Unlocks firebrick walls, which block heat.' },
@@ -220,6 +223,8 @@ const Sim = (() => {
     { id: 'tongs',      name: 'Tempered tongs',   cost: { embers: 7000 },  req: 'clay', desc: 'Ember pits ×3.' },
     { id: 'charcoal',   name: 'Charcoal kilns',   cost: { embers: 5000 },  req: 'axes', desc: 'Unlocks kilns, which turn spare wood into embers.' },
     { id: 'waterwheel', name: 'Waterwheel',       cost: { embers: 16000, wood: 2000 }, req: 'bellows', desc: 'Bellows never fall below half charge, even when you stop pumping.' },
+    { id: 'cobbles',    name: 'Cobbled floor',    cost: { embers: 6000, wood: 1500 }, req: 'barrows', desc: 'Carters walk 40% faster.' },
+    { id: 'oxcarts',    name: 'Ox carts',         cost: { embers: 20000, wood: 3000 }, req: 'barrows', desc: 'Carters carry 2.5 times as much again.' },
     { id: 'mending',    name: 'Mending crew',     cost: { embers: 30000 },              desc: 'Cracked buildings repair themselves after 20 seconds.' },
     { id: 'deep',       name: 'Deep pits',        cost: { embers: 50000 }, req: 'tongs', desc: 'The ember pit sweet spot is 50% wider.' },
     { id: 'hotblast',   name: 'Hot blast',        cost: { embers: 90000, wood: 8000 }, req: 'waterwheel', desc: 'Hearths give 50% more heat.' },
@@ -237,6 +242,7 @@ const Sim = (() => {
     NB.push([x > 0 ? i - 1 : -1, x < N - 1 ? i + 1 : -1, y > 0 ? i - N : -1, y < N - 1 ? i + N : -1]);
   }
   const TMP = new Float64Array(N * N);
+  const FUEL = new Float64Array(N * N);
   const MASK = new Uint8Array(N * N);
   let maskRing = -1;
   function bounds(ring) { const h = 2 + ring; return [6 - h, 6 + h - 1]; }
@@ -258,19 +264,23 @@ const Sim = (() => {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
-  function place(s, i, t) { s.cells[i].b = { t, l: 1, th: 1, cr: 0 }; }
+  // f is the building's wood store: a woodcutter's pile, or a hearth's or kiln's fuel.
+  function place(s, i, t) { s.cells[i].b = { t, l: 1, th: 1, cr: 0, f: 0 }; }
 
   function newState(seed) {
     const s = {
       v: VERSION, seed: (seed ?? Math.floor(Math.random() * 2 ** 31)) | 0, t: 0,
-      embers: 10, wood: 15, totalEmbers: 10, totalWood: 0, ring: 0, cells: [], up: {}, charge: 0, fuel: 1, kfuel: 1,
+      embers: 10, wood: 5, totalEmbers: 10, totalWood: 0, ring: 0, cells: [], carts: [], up: {}, charge: 0,
       rate: { embers: 0, wood: 0 }, prod: { embers: 0, wood: 0, burn: 0 },
       stats: { cracks: 0, hottest: AMB, taps: 0, pumps: 0 }, ms: {}, done: false, events: [], _msT: 0,
       tut: { i: 0, seen: {}, off: false }, // tutorial progress; the simulation never reads it
     };
     for (let i = 0; i < N * N; i++) s.cells.push({ T: AMB, b: null });
     place(s, idx(5, 5), 'hearth');
+    s.cells[idx(5, 5)].b.f = 15;
     place(s, idx(6, 5), 'pit');
+    place(s, idx(7, 7), 'hut');
+    syncCarts(s);
     return s;
   }
 
@@ -299,6 +309,15 @@ const Sim = (() => {
   const ventCool = b => B.vent.cool * (1 + 0.5 * (b.l - 1));
   const cond = b => !b ? 1 : b.cr ? 0.3 : B[b.t].cond;
 
+  // ---- wood logistics ----
+  const isFire = b => b && (b.t === 'hearth' || b.t === 'kiln');
+  const storeCap = b => b.t === 'hearth' ? 20 * lvlF(b.l) : b.t === 'kiln' ? 30 * b.l : b.t === 'lodge' ? 12 * b.l : 0;
+  const cartCap = s => 6 * (s.up.barrows ? 2 : 1) * (s.up.oxcarts ? 2.5 : 1);
+  const carters = b => b.l + 1;
+  // Carters walk 2.2 tiles a second on cool ground and slow down as the floor heats up.
+  const cartSpeed = (T, s) => 2.2 * (s && s.up.cobbles ? 1.4 : 1) / (1 + Math.max(0, T - 150) / 200);
+  const lit = b => !b.cr && b.th > 0 && b.f > 0.01;
+
   // How well the building on tile i is working right now, 0..1 (null for buildings with no output).
   function efficiency(s, i) {
     const c = s.cells[i], b = c.b;
@@ -306,8 +325,8 @@ const Sim = (() => {
     if (b.cr) return 0;
     if (b.t === 'pit') return pitEff(s, c.T);
     if (b.t === 'lodge') return lodgeEff(s, c.T);
-    if (b.t === 'hearth') return s.fuel * b.th;
-    if (b.t === 'kiln') return kilnEff(s, c.T) * s.kfuel * b.th;
+    if (b.t === 'hearth') return lit(b) ? b.th : 0;
+    if (b.t === 'kiln') return lit(b) ? kilnEff(s, c.T) * b.th : 0;
     return null;
   }
   function output(s, i) {
@@ -315,7 +334,7 @@ const Sim = (() => {
     if (!b || b.cr) return 0;
     if (b.t === 'pit') return B.pit.rate * b.l * pitMult(s) * pitEff(s, c.T);
     if (b.t === 'lodge') return B.lodge.rate * b.l * lodgeMult(s) * lodgeEff(s, c.T);
-    if (b.t === 'kiln') return B.kiln.rate * b.l * b.th * pitMult(s) * kilnEff(s, c.T) * s.kfuel;
+    if (b.t === 'kiln') return lit(b) ? B.kiln.rate * b.l * b.th * pitMult(s) * kilnEff(s, c.T) : 0;
     return 0;
   }
   function bellowsMult(s, i) {
@@ -339,22 +358,165 @@ const Sim = (() => {
     s.events.push({ k: 'crack', i, t: c.b.t });
   }
 
+  // Keep each hut's carters in step with its level. Carters of a demolished hut drop their load in the yard.
+  function syncCarts(s) {
+    const want = new Map();
+    for (let i = 0; i < N * N; i++) { const b = s.cells[i].b; if (b && b.t === 'hut') want.set(i, carters(b)); }
+    const have = new Map();
+    s.carts = s.carts.filter(c => {
+      const w = want.get(c.h) || 0, h = have.get(c.h) || 0;
+      if (h >= w) { s.wood += c.load; return false; }
+      have.set(c.h, h + 1); return true;
+    });
+    for (const [h, w] of want) for (let k = have.get(h) || 0; k < w; k++) {
+      s.carts.push({ h, x: h % N, y: (h / N) | 0, px: h % N, py: (h / N) | 0, path: [], load: 0, job: null, wait: k * 0.7 });
+    }
+  }
+
+  const DIST = new Float64Array(N * N), PREV = new Int16Array(N * N), SEEN = new Uint8Array(N * N);
+  // Cheapest walk from tile `from` to any tile in `goals`, where each step costs the time to cross that tile.
+  function findPath(s, from, goals) {
+    const m = mask(s.ring), n = N * N;
+    DIST.fill(Infinity); SEEN.fill(0); PREV.fill(-1);
+    DIST[from] = 0;
+    for (;;) {
+      let u = -1, du = Infinity;
+      for (let i = 0; i < n; i++) if (!SEEN[i] && DIST[i] < du) { du = DIST[i]; u = i; }
+      if (u < 0) return null;
+      if (goals.includes(u)) { const p = []; for (let v = u; v !== from; v = PREV[v]) p.push(v); return p.reverse(); }
+      SEEN[u] = 1;
+      for (const v of NB[u]) {
+        if (v < 0 || !m[v] || SEEN[v]) continue;
+        const d = du + 1 / cartSpeed(s.cells[v].T, s);
+        if (d < DIST[v]) { DIST[v] = d; PREV[v] = u; }
+      }
+    }
+  }
+  const manhattan = (a, b) => Math.abs(a % N - b % N) + Math.abs(((a / N) | 0) - ((b / N) | 0));
+  const cartTile = c => Math.round(c.y) * N + Math.round(c.x);
+  // A fire can be fed from any tile next to it; carters don't stand in the flames.
+  function goalTiles(s, c, g) {
+    const b = s.cells[g].b;
+    if (c.job.stage === 'put' && isFire(b)) { const t = [g]; for (const j of NB[g]) if (j >= 0 && unlocked(s, j)) t.push(j); return t; }
+    return [g];
+  }
+
+  function assign(s, c) {
+    const cap = cartCap(s), here = cartTile(c), n = N * N;
+    const incoming = new Map(), outgoing = new Map();
+    for (const o of s.carts) {
+      if (o === c || !o.job) continue;
+      if (o.job.dst >= 0) incoming.set(o.job.dst, (incoming.get(o.job.dst) || 0) + (o.load || cap));
+      if (o.job.stage === 'get' && o.job.src >= 0) outgoing.set(o.job.src, (outgoing.get(o.job.src) || 0) + cap);
+    }
+    // The fire most in need, a little biased towards nearby ones.
+    let dst = -1, best = Infinity;
+    for (let i = 0; i < n; i++) {
+      const b = s.cells[i].b;
+      if (!isFire(b) || b.cr || b.th === 0 || !unlocked(s, i)) continue;
+      const fill = (b.f + (incoming.get(i) || 0)) / storeCap(b);
+      if (fill >= 0.6) continue;
+      const v = fill + manhattan(here, i) * 0.02;
+      if (v < best) { best = v; dst = i; }
+    }
+    const avail = i => s.cells[i].b.f - (outgoing.get(i) || 0);
+    if (dst >= 0) {
+      let src = null, bs = Infinity;
+      for (let i = 0; i < n; i++) {
+        const b = s.cells[i].b;
+        if (!b || b.t !== 'lodge' || !unlocked(s, i) || avail(i) < 1) continue;
+        const v = manhattan(here, i) + manhattan(i, dst) - Math.min(avail(i), cap) * 0.15;
+        if (v < bs) { bs = v; src = i; }
+      }
+      if (s.wood >= 1) { const v = manhattan(here, c.h) + manhattan(c.h, dst) + 1; if (v < bs) { bs = v; src = -1; } }
+      if (src !== null) { c.job = { stage: 'get', src, dst }; return; }
+    }
+    // Nothing hungry: clear the fullest woodpile into the yard.
+    let src = -1, bs = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const b = s.cells[i].b;
+      if (!b || b.t !== 'lodge' || !unlocked(s, i)) continue;
+      const a = avail(i);
+      if (a < Math.min(cap, storeCap(b) * 0.5)) continue;
+      const v = a / storeCap(b) - manhattan(here, i) * 0.02;
+      if (v > bs) { bs = v; src = i; }
+    }
+    if (src >= 0) { c.job = { stage: 'get', src, dst: -1 }; return; }
+    if (here !== c.h) c.job = { stage: 'home', src: -1, dst: -1 };
+  }
+
+  function moveCarts(s, dt) {
+    for (const c of s.carts) {
+      c.px = c.x; c.py = c.y;
+      if (!c.job) {
+        if (c.wait > 0) { c.wait -= dt; continue; }
+        assign(s, c);
+        if (!c.job) { c.wait = 1; continue; }
+        c.path = null;
+      }
+      const j = c.job;
+      const g = j.stage === 'get' ? (j.src < 0 ? c.h : j.src) : j.stage === 'home' ? c.h : (j.dst < 0 ? c.h : j.dst);
+      // Drop the job if its building has gone; any load goes to the yard.
+      const gb = s.cells[g].b;
+      const okType = j.stage === 'home' || (g === c.h ? gb && gb.t === 'hut' : j.stage === 'get' ? gb && gb.t === 'lodge' : isFire(gb) && !gb.cr);
+      if (!okType) {
+        if (c.load > 0) { c.job = { stage: 'put', src: -1, dst: -1 }; c.path = null; if (!s.cells[c.h].b) { s.wood += c.load; c.load = 0; c.job = null; } }
+        else c.job = null;
+        continue;
+      }
+      if (!c.path) {
+        const goals = goalTiles(s, c, g);
+        c.path = goals.includes(cartTile(c)) ? [] : findPath(s, cartTile(c), goals);
+        if (!c.path) { c.job = null; c.wait = 2; continue; }
+      }
+      if (c.path.length) {
+        const nt = c.path[0], tx = nt % N, ty = (nt / N) | 0;
+        const dx = tx - c.x, dy = ty - c.y, d = Math.hypot(dx, dy);
+        const v = cartSpeed(s.cells[cartTile(c)].T, s) * dt;
+        if (v >= d) { c.x = tx; c.y = ty; c.path.shift(); }
+        else { c.x += dx / d * v; c.y += dy / d * v; }
+        continue;
+      }
+      // Arrived.
+      c.path = null;
+      const cap = cartCap(s);
+      if (j.stage === 'home') { c.job = null; c.wait = 1; }
+      else if (j.stage === 'get') {
+        let take;
+        if (j.src < 0) { take = Math.min(cap, s.wood); s.wood -= take; }
+        else { const b = s.cells[j.src].b; take = Math.min(cap, b.f); b.f -= take; }
+        c.load += take;
+        if (c.load < 0.5) { s.wood += c.load; c.load = 0; c.job = null; c.wait = 0.5; }
+        else j.stage = 'put';
+      } else {
+        if (j.dst < 0) { s.wood += c.load; c.load = 0; c.job = null; }
+        else {
+          const b = s.cells[j.dst].b, give = Math.min(c.load, storeCap(b) - b.f);
+          b.f += give; c.load -= give;
+          if (c.load > 0.01) { c.job = { stage: 'put', src: -1, dst: -1 }; }
+          else { c.load = 0; c.job = null; }
+        }
+      }
+    }
+  }
+
   function step(s, dt = DT) {
     const cells = s.cells, n = N * N, m = mask(s.ring);
     s.t += dt;
     s.charge = Math.max(s.up.waterwheel ? 0.5 : 0, s.charge - 0.04 * dt);
 
-    let demand = 0;
-    for (let i = 0; i < n; i++) { const b = cells[i].b; if (b && b.t === 'hearth' && !b.cr && m[i]) demand += hearthBurn(s, b) * dt; }
-    const fuel = demand > 0 ? Math.min(1, s.wood / demand) : 1;
-    s.wood = Math.max(0, s.wood - demand * fuel);
-    s.fuel = fuel;
-    // Kilns take what wood the hearths leave.
-    let kdemand = 0;
-    for (let i = 0; i < n; i++) { const b = cells[i].b; if (b && b.t === 'kiln' && !b.cr && m[i]) kdemand += kilnBurn(b) * dt; }
-    const kfuel = kdemand > 0 ? Math.min(1, s.wood / kdemand) : 1;
-    s.wood = Math.max(0, s.wood - kdemand * kfuel);
-    s.kfuel = kfuel;
+    // Each fire burns from its own store. FUEL[i] is the share of its full burn it managed this tick.
+    let burned = 0;
+    for (let i = 0; i < n; i++) {
+      const b = cells[i].b;
+      FUEL[i] = 0;
+      if (!isFire(b) || b.cr || !m[i]) continue;
+      const need = (b.t === 'hearth' ? hearthBurn(s, b) : kilnBurn(b)) * dt;
+      if (need <= 0) continue;
+      const used = Math.min(b.f, need);
+      b.f -= used; burned += used;
+      FUEL[i] = used / need;
+    }
 
     // Heat: hearths emit, every tile loses heat to the air, and neighbours exchange heat by conduction.
     // Locked tiles and the edge of the grid are held at ambient, so they act as a heat sink.
@@ -363,8 +525,8 @@ const Sim = (() => {
       const c = cells[i], b = c.b, T = c.T;
       let d = 0, loss = LOSS;
       if (b && !b.cr) {
-        if (b.t === 'hearth') d += hearthHeat(s, b) * fuel * bellowsMult(s, i);
-        else if (b.t === 'kiln') d += B.kiln.emit * b.l * b.th * kfuel;
+        if (b.t === 'hearth') d += hearthHeat(s, b) * FUEL[i] * bellowsMult(s, i);
+        else if (b.t === 'kiln') d += B.kiln.emit * b.l * b.th * FUEL[i];
         else if (b.t === 'vent') loss += ventCool(b);
       }
       d -= loss * (T - AMB);
@@ -394,14 +556,19 @@ const Sim = (() => {
         continue;
       }
       if (b.t === 'pit') pe += B.pit.rate * b.l * pm * pitEff(s, c.T);
-      else if (b.t === 'lodge') pw += B.lodge.rate * b.l * lm * lodgeEff(s, c.T);
-      else if (b.t === 'kiln') pe += B.kiln.rate * b.l * b.th * pm * kilnEff(s, c.T) * kfuel;
+      else if (b.t === 'lodge') {
+        // Woodcutters stack their pile and stop when it is full: the carters set the pace.
+        const cut = Math.min(B.lodge.rate * b.l * lm * lodgeEff(s, c.T) * dt, storeCap(b) - b.f);
+        if (cut > 0) { b.f += cut; pw += cut / dt; }
+      }
+      else if (b.t === 'kiln') pe += B.kiln.rate * b.l * b.th * pm * kilnEff(s, c.T) * FUEL[i];
       const mx = maxT(s, b.t);
       if (c.T > mx) { const over = (c.T - mx) / 100 + 1; if (rand(s) < 0.012 * over * over * dt) crack(s, i); }
     }
     s.embers += pe * dt; s.totalEmbers += pe * dt;
-    s.wood += pw * dt; s.totalWood += pw * dt;
-    const burn = (demand * fuel + kdemand * kfuel) / dt;
+    s.totalWood += pw * dt;
+    moveCarts(s, dt);
+    const burn = burned / dt;
     s.prod.embers = pe; s.prod.wood = pw; s.prod.burn = burn;
     const a = 1 - Math.exp(-dt / 2);
     s.rate.embers += (pe - s.rate.embers) * a;
@@ -437,13 +604,13 @@ const Sim = (() => {
         const { t, i } = a;
         if (!B[t] || !buildable(s, t) || !unlocked(s, i) || s.cells[i].b) return false;
         const c = buildCost(s, t); if (!can(s, c)) return false;
-        pay(s, c); place(s, i, t); return true;
+        pay(s, c); place(s, i, t); if (t === 'hut') syncCarts(s); return true;
       }
       case 'level': {
         const b = s.cells[a.i].b;
         if (!b || b.cr || b.l >= B[b.t].levels) return false;
         const c = levelCost(s, a.i); if (!can(s, c)) return false;
-        pay(s, c); b.l++; return true;
+        pay(s, c); b.l++; if (b.t === 'hut') syncCarts(s); return true;
       }
       case 'repair': {
         const b = s.cells[a.i].b;
@@ -456,7 +623,12 @@ const Sim = (() => {
         if (!b || (b.t !== 'hearth' && b.t !== 'kiln') || ![0, 0.5, 1].includes(a.v)) return false;
         b.th = a.v; return true;
       }
-      case 'demolish': if (!s.cells[a.i].b) return false; s.cells[a.i].b = null; return true;
+      case 'demolish': {
+        const b = s.cells[a.i].b; if (!b) return false;
+        s.cells[a.i].b = null;
+        if (b.t === 'hut') syncCarts(s);
+        return true;
+      }
       case 'upgrade': {
         const u = UMAP[a.id];
         if (!u || !upVisible(s, u) || !can(s, u.cost)) return false;
@@ -516,7 +688,19 @@ const Sim = (() => {
     if (!o || typeof o !== 'object' || !Array.isArray(o.cells) || o.cells.length !== N * N) throw new Error('Not an Emberwright save');
     const s = Object.assign(newState(o.seed), o);
     s.events = [];
-    // Future versions migrate here: if (s.v < 2) { ... s.v = 2; }
+    if (o.v < 2) {
+      // v2: wood is carried. Fires start with a full store, and a hut is put on the coolest free tile.
+      for (const c of s.cells) if (c.b) c.b.f = isFire(c.b) ? storeCap(c.b) : 0;
+      if (!count(s, 'hut')) {
+        let best = -1;
+        for (let i = 0; i < N * N; i++) if (unlocked(s, i) && !s.cells[i].b && (best < 0 || s.cells[i].T < s.cells[best].T)) best = i;
+        if (best >= 0) place(s, best, 'hut');
+      }
+      s.carts = [];
+      delete s.fuel; delete s.kfuel;
+    }
+    if (!Array.isArray(s.carts)) s.carts = [];
+    syncCarts(s);
     s.v = VERSION;
     return s;
   }
@@ -525,7 +709,7 @@ const Sim = (() => {
     N, DT, AMB, VERSION, B, ORDER, U, UMAP, EXPAND, NB, MS,
     newState, step, act, advance, fastForward, serialize, deserialize,
     idx, unlocked, bounds, count, buildCost, levelCost, repairCost, expandCost, can, buildable, upVisible,
-    maxT, pitEff, lodgeEff, kilnEff, kilnBurn, pitMult, lodgeMult, pitWidth, efficiency, output, bellowsMult, hearthBurn, hearthHeat,
+    maxT, pitEff, lodgeEff, kilnEff, kilnBurn, pitMult, lodgeMult, storeCap, cartCap, carters, cartSpeed, lit, isFire, pitWidth, efficiency, output, bellowsMult, hearthBurn, hearthHeat,
   };
 })();
 if (typeof module !== 'undefined') module.exports = Sim;
@@ -570,6 +754,8 @@ function fmtDur(t) {
   if (t < 5400) return Math.round(t / 60) + ' minutes';
   return (t / 3600).toFixed(1) + ' hours';
 }
+function coldFires() { const o = []; for (let i = 0; i < N * N; i++) { const b = S.cells[i].b; if (b && Sim.isFire(b) && !b.cr && b.th > 0 && b.f < 0.01 && Sim.unlocked(S, i)) o.push(i); } return o; }
+function fullPiles() { const o = []; for (let i = 0; i < N * N; i++) { const b = S.cells[i].b; if (b && b.t === 'lodge' && b.f >= Sim.storeCap(b) - 0.01 && Sim.unlocked(S, i)) o.push(i); } return o; }
 const tileName = i => `${String.fromCharCode(65 + (i % N))}${Math.floor(i / N) + 1}`;
 
 // ---------- state ----------
@@ -639,7 +825,7 @@ function drawIcon(b, x, y, ts, i, now) {
     case 'hearth': {
       ctx.fillStyle = '#3b3430'; ctx.strokeStyle = '#6b625b';
       ctx.beginPath(); ctx.arc(cx, cy + r * 0.25, r * 0.95, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      const lit = !b.cr && b.th > 0 && S.fuel > 0.02;
+      const lit = Sim.lit(b);
       if (lit) {
         const f = (0.55 + 0.45 * b.th) * (0.92 + 0.08 * Math.sin(now / 90 + i));
         const h = r * 1.5 * f;
@@ -670,10 +856,13 @@ function drawIcon(b, x, y, ts, i, now) {
       ctx.fillStyle = '#3f6b2f';
       ctx.beginPath(); ctx.moveTo(cx - r, cy - r * 0.05); ctx.lineTo(cx, cy - r * 0.95); ctx.lineTo(cx + r, cy - r * 0.05); ctx.closePath(); ctx.fill(); ctx.stroke();
       ctx.fillStyle = '#2a1a0e'; ctx.fillRect(cx - r * 0.18, cy + r * 0.35, r * 0.36, r * 0.5);
+      const fill = b.f / Sim.storeCap(b);
+      ctx.fillStyle = '#b07a45'; ctx.strokeStyle = '#4a2c12'; ctx.lineWidth = 1;
+      for (let k = 0; k < Math.ceil(fill * 4); k++) { const lx = cx + r * 0.55, ly = cy + r * (0.75 - k * 0.22); ctx.beginPath(); ctx.ellipse(lx, ly, r * 0.32, r * 0.1, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
       break;
     }
     case 'kiln': {
-      const lit = !b.cr && b.th > 0 && S.kfuel > 0.02;
+      const lit = Sim.lit(b);
       ctx.fillStyle = '#3a3532'; ctx.strokeStyle = '#151210';
       ctx.beginPath(); ctx.moveTo(cx - r, cy + r * 0.7); ctx.quadraticCurveTo(cx - r, cy - r * 0.9, cx, cy - r * 0.9);
       ctx.quadraticCurveTo(cx + r, cy - r * 0.9, cx + r, cy + r * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -684,6 +873,16 @@ function drawIcon(b, x, y, ts, i, now) {
         const ph = (now / 700 + i * 0.31) % 1;
         ctx.beginPath(); ctx.moveTo(cx, cy - r * (0.95 + ph * 0.6)); ctx.quadraticCurveTo(cx + r * 0.3, cy - r * (1.15 + ph * 0.6), cx, cy - r * (1.35 + ph * 0.6)); ctx.stroke();
       }
+      break;
+    }
+    case 'hut': {
+      ctx.fillStyle = '#6b4a2e'; ctx.strokeStyle = '#2a1a0e';
+      ctx.fillRect(cx - r * 0.85, cy - r * 0.2, r * 1.3, r * 0.95); ctx.strokeRect(cx - r * 0.85, cy - r * 0.2, r * 1.3, r * 0.95);
+      ctx.fillStyle = '#8b3a22';
+      ctx.beginPath(); ctx.moveTo(cx - r * 1.0, cy - r * 0.15); ctx.lineTo(cx - r * 0.2, cy - r * 0.85); ctx.lineTo(cx + r * 0.6, cy - r * 0.15); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#d6b88a'; ctx.lineWidth = Math.max(1, ts * 0.04);
+      ctx.beginPath(); ctx.arc(cx + r * 0.7, cy + r * 0.55, r * 0.32, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + r * 0.7, cy + r * 0.23); ctx.lineTo(cx + r * 0.7, cy + r * 0.87); ctx.moveTo(cx + r * 0.38, cy + r * 0.55); ctx.lineTo(cx + r * 1.02, cy + r * 0.55); ctx.stroke();
       break;
     }
     case 'bellows': {
@@ -722,6 +921,13 @@ function drawIcon(b, x, y, ts, i, now) {
     ctx.beginPath(); ctx.moveTo(x + ts * 0.2, y + ts * 0.15); ctx.lineTo(x + ts * 0.45, y + ts * 0.45); ctx.lineTo(x + ts * 0.35, y + ts * 0.55); ctx.lineTo(x + ts * 0.7, y + ts * 0.85); ctx.stroke();
     ctx.fillStyle = 'rgba(180,20,10,.25)'; ctx.fillRect(x, y, ts, ts);
   }
+  if (Sim.isFire(b) && !b.cr) {
+    const f = b.f / Sim.storeCap(b);
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(x + ts * 0.86, y + ts * 0.12, ts * 0.08, ts * 0.76);
+    ctx.fillStyle = f > 0.3 ? '#d6b88a' : f > 0.02 ? '#f59e0b' : '#ef4444';
+    const h = ts * 0.76 * Math.max(f, 0.04);
+    ctx.fillRect(x + ts * 0.86, y + ts * 0.88 - h, ts * 0.08, h);
+  }
   if (Sim.B[b.t].levels > 1 && b.l > 1) {
     ctx.fillStyle = 'rgba(0,0,0,.55)';
     const label = 'L' + b.l;
@@ -738,6 +944,28 @@ function drawIcon(b, x, y, ts, i, now) {
     ctx.fillText(b.th === 0 ? 'off' : '½', x + ts * 0.62, y + 3);
   }
   ctx.restore();
+}
+
+function drawCarts(ts, now) {
+  const a = Math.min(1, acc / Sim.DT);
+  for (const c of S.carts) {
+    const x = (c.px + (c.x - c.px) * a + 0.5) * ts, y = (c.py + (c.y - c.py) * a + 0.5) * ts;
+    const moving = c.x !== c.px || c.y !== c.py;
+    const bob = moving ? Math.sin(now / 90 + c.h) * ts * 0.03 : 0;
+    const r = ts * 0.17;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(x, y + r * 1.5, r * 1.3, r * 0.45, 0, 0, Math.PI * 2); ctx.fill();
+    if (c.load > 0) {
+      ctx.fillStyle = '#9a6a3a'; ctx.strokeStyle = '#3a220e'; ctx.lineWidth = 1;
+      for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.ellipse(x + r * 1.1, y + r * (0.9 - k * 0.55) + bob, r * 0.75, r * 0.28, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    }
+    ctx.fillStyle = '#3d5a80'; ctx.strokeStyle = '#111'; ctx.lineWidth = Math.max(1, ts * 0.025);
+    ctx.beginPath(); ctx.ellipse(x, y + r * 0.6 + bob, r * 0.8, r * 0.95, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#e3a679';
+    ctx.beginPath(); ctx.arc(x, y - r * 0.6 + bob, r * 0.62, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function draw(now) {
@@ -789,6 +1017,7 @@ function draw(now) {
       ctx.strokeRect(x + 2, y + 2, ts - 4, ts - 4);
     }
   }
+  drawCarts(ts, now);
   if (armed) {
     ctx.fillStyle = 'rgba(255,255,255,.08)';
     for (let i = 0; i < N * N; i++) if (Sim.unlocked(S, i) && !S.cells[i].b) {
@@ -836,7 +1065,9 @@ function setHTML(el, html) { if (cache.get(el) !== html) { cache.set(el, html); 
 function goalText() {
   const s = S;
   if (s.done) return '<b>The Forge is kindled.</b> Milestone 1 is complete; the next layer (materials and alloys) arrives in M2.';
-  if (!Sim.count(s, 'lodge')) return 'Your hearth is burning its last wood. <b>Build a Woodcutter</b> on a cool tile, away from the fire.';
+  if (!Sim.count(s, 'lodge')) return 'Your hearth is burning its last wood. <b>Build a Woodcutter</b> on a cool tile, away from the fire. Your carters will bring the wood.';
+  if (coldFires().length && fullPiles().length) return 'Fires are out of wood while woodpiles sit full: your carters can\u2019t keep up. Build another <b>Carter\u2019s hut</b> between them, or level one up.';
+  if (coldFires().length) return 'A fire has run out of wood. Build or level a <b>Woodcutter</b>, or another <b>Carter\u2019s hut</b>.';
   if (!s.up.axes) return 'Embers come from the pit beside the hearth. Buy <b>Sharpened axes</b> below.';
   if (Sim.count(s, 'pit') < 3) return 'Tap a tile to read its temperature. <b>Ember pits</b> work best near <b>520°</b>.';
   if (!s.up.bellows) return 'More hearths mean more heat, and more wood. Save up for <b>Bellows</b>.';
@@ -882,6 +1113,9 @@ function infoHTML() {
   if (b.t === 'kiln') rows += `<dt>Sweet spot</dt><dd>${d.ideal}° ± ${d.width}°</dd>`;
   if (b.t === 'pit' || b.t === 'lodge' || b.t === 'hearth' || b.t === 'kiln') rows += `<dt>Working at</dt><dd id="dynE"></dd><dt>${b.t === 'hearth' ? 'Burns' : 'Makes'}</dt><dd id="dynO"></dd>`;
   if (b.t === 'kiln') rows += `<dt>Burns</dt><dd id="dynB"></dd>`;
+  if (Sim.isFire(b)) rows += `<dt>Fuel store</dt><dd id="dynF"></dd>`;
+  if (b.t === 'lodge') rows += `<dt>Woodpile</dt><dd id="dynF"></dd>`;
+  if (b.t === 'hut') rows += `<dt>Carters</dt><dd id="dynC"></dd><dt>Each carries</dt><dd>${Sim.cartCap(S)} wood</dd>`;
   if (b.t === 'hearth') rows += `<dt>Heat out</dt><dd id="dynH"></dd>`;
   let btns = '';
   if (b.cr) {
@@ -907,10 +1141,17 @@ function renderInfo() {
   const e = Sim.efficiency(S, sel);
   const dE = $('#dynE'); if (dE && e !== null) dE.textContent = Math.round(e * 100) + '%';
   const dO = $('#dynO');
-  if (dO) dO.textContent = b.t === 'hearth' ? (b.cr ? 0 : fmt(Sim.hearthBurn(S, b) * S.fuel)) + ' wood/s' : fmt(Sim.output(S, sel)) + (b.t === 'lodge' ? ' wood/s' : ' embers/s');
-  const dB = $('#dynB'); if (dB) dB.textContent = (b.cr ? 0 : fmt(Sim.kilnBurn(b) * S.kfuel)) + ' wood/s';
+  if (dO) dO.textContent = b.t === 'hearth' ? (Sim.lit(b) ? fmt(Sim.hearthBurn(S, b)) : 0) + ' wood/s' : fmt(Sim.output(S, sel)) + (b.t === 'lodge' ? ' wood/s' : ' embers/s');
+  const dB = $('#dynB'); if (dB) dB.textContent = (Sim.lit(b) ? fmt(Sim.kilnBurn(b)) : 0) + ' wood/s';
+  const dF = $('#dynF');
+  if (dF) {
+    const cap = Sim.storeCap(b), full = b.f >= cap - 0.01;
+    dF.innerHTML = `${fmt(b.f)} / ${fmt(cap)}` + (b.t === 'lodge' && full ? ' <span class="muted">· full: cutting stops until a carter collects</span>' : Sim.isFire(b) && b.f < 0.01 && b.th > 0 ? ' <span style="color:var(--bad)">· empty, waiting for a carter</span>' : '');
+  }
+  const dC = $('#dynC');
+  if (dC) { const mine = S.carts.filter(c => c.h === sel); dC.textContent = `${mine.length} (${mine.filter(c => c.job).length} out working)`; }
   const dH = $('#dynH');
-  if (dH) dH.textContent = (b.cr ? 0 : fmt(Sim.hearthHeat(S, b) * S.fuel * Sim.bellowsMult(S, sel))) + '°/s';
+  if (dH) dH.textContent = (Sim.lit(b) ? fmt(Sim.hearthHeat(S, b) * Sim.bellowsMult(S, sel)) : 0) + '°/s';
 }
 $('#info').addEventListener('click', ev => {
   const btn = ev.target.closest('[data-act]'); if (!btn || sel < 0) return;
@@ -978,8 +1219,9 @@ function renderTop() {
   const re = $('#rEmbers'), rw = $('#rWood');
   re.textContent = (S.rate.embers >= 0 ? '+' : '') + fmt(S.rate.embers) + '/s';
   const w = S.rate.wood;
-  rw.textContent = (w >= 0 ? '+' : '−') + fmt(Math.abs(w)) + '/s' + (S.fuel < 0.99 && S.prod.burn > 0 ? ' · hearths starving' : '');
-  rw.classList.toggle('neg', w < -0.05 || S.fuel < 0.99);
+  const cold = coldFires().length;
+  rw.textContent = (w >= 0 ? '+' : '−') + fmt(Math.abs(w)) + '/s' + (cold ? ` · ${cold} fire${cold > 1 ? 's' : ''} out of wood` : '');
+  rw.classList.toggle('neg', w < -0.05 || cold > 0);
   $('#btnPump').classList.toggle('hidden', !S.up.bellows);
   $('#chargeBar').style.width = (S.charge * 100).toFixed(0) + '%';
   $('#clock').innerHTML = fmtTime(S.t) + (tutPaused() ? ' <span class="paused-tag">· paused</span>' : '');
@@ -1060,7 +1302,7 @@ function handleEvents() {
     if (e.k === 'crack') { cracks++; lastCrack = e; }
     else if (e.k === 'ms' && e.id !== 'forge') toast(`Milestone: <b>${e.name}</b>`, 'good');
   }
-  if (cracks === 1) toast(`A ${Sim.B[lastCrack.t].name.toLowerCase()} cracked from the heat at ${tileName(lastCrack.i)}.`, 'bad');
+  if (cracks === 1) toast(`${/^[aeiou]/i.test(Sim.B[lastCrack.t].name) ? 'An' : 'A'} ${Sim.B[lastCrack.t].name.toLowerCase()} cracked from the heat at ${tileName(lastCrack.i)}.`, 'bad');
   else if (cracks > 1) toast(`${cracks} buildings cracked from the heat.`, 'bad');
   S.events.length = 0;
 }
@@ -1140,10 +1382,10 @@ const MAIN = [
   { id: 'lodge', done: s => Sim.count(s, 'lodge') > 0,
     say: s => armed === 'lodge'
       ? `Now tap a <b>cold, dark tile</b> well away from the fire. I've marked one. Woodcutters slow down once their tile passes <b>120°</b>.`
-      : `The hearth burns half a log a second and you've only <b>${fmt(s.wood)} wood</b> left. Tap <b>Woodcutter</b> below the floor to build one.`,
+      : `That hearth burns half a log a second, and its store has only <b>${fmt(s.cells[firstOf(s, 'hearth')].b?.f ?? 0)} logs</b> left. Tap <b>Woodcutter</b> below the floor to build one.`,
     target: s => armed === 'lodge' ? { tile: hold('lodge', coolTile) } : { el: '[data-build="lodge"]' } },
   { id: 'inspect', done: () => selType() === 'pit',
-    say: () => `Good, that'll keep the fire fed. Now <b>tap the ember pit</b> to see how it's doing.`,
+    say: () => `Good. See the little figures? They're <b>carters</b> from the hut in the corner. They'll carry the wood to the hearth, so keep their path cool: <b>hot tiles slow them down</b>. Now <b>tap the ember pit</b>.`,
     target: () => ({ tile: firstOf(S, 'pit') }) },
   { id: 'readout',
     say: s => {
@@ -1184,8 +1426,13 @@ const LESSONS = [
     say: () => `Something <b>cracked</b>! A cracked building stops working and dumps its heat on its neighbours, which can crack them too. Let it cool, then tap it and <b>Repair</b>.`,
     target: s => ({ tile: crackIdx(s) }) },
   { id: 'starving', crit: true, after: 'lodge', when: () => starveT > 5,
-    say: () => `Your hearths are <b>running out of wood</b>, so the floor is cooling. Build another <b>woodcutter</b> on a cold tile, or level one up.`,
-    target: () => ({ el: '[data-build="lodge"]' }) },
+    say: () => fullPiles().length
+      ? `This fire's <b>store is empty</b>, but your woodpiles are full. The wood's there, there just aren't enough carters. Build another <b>Carter's hut</b> between the woodcutters and the fires, or level up the one you have.`
+      : `This fire's <b>store is empty</b>, so it's gone cold. You need more wood: build another <b>woodcutter</b> on a cold tile, or level one up.`,
+    target: () => ({ tile: coldFires()[0] ?? -1 }) },
+  { id: 'pilefull', after: 'bye', when: () => fullT > 15,
+    say: () => `This woodcutter's <b>pile is full</b>, so they've stopped cutting. Wood only moves as fast as your carters. More huts, higher-level huts, or <b>Wheelbarrows</b> will help, and so will shorter, cooler walks.`,
+    target: () => ({ tile: fullPiles()[0] ?? -1 }) },
   { id: 'hotlodge', after: 'bye', when: s => { const [i, e] = worst(s, 'lodge', Sim.lodgeEff); return i >= 0 && e < 0.6; },
     say: () => `That woodcutter is <b>too hot</b> to work properly. They slow down above 120°. Move them to the cold edge, or put something between them and the fire.`,
     target: s => ({ tile: worst(s, 'lodge', Sim.lodgeEff)[0] }) },
@@ -1220,6 +1467,9 @@ const LESSONS = [
   { id: 'waterwheel', after: 'bye', when: s => !!s.up.waterwheel,
     say: () => `With the <b>waterwheel</b> your bellows never drop below half, even when you're not pumping. Your arms can rest.`,
     target: () => ({ el: '#btnPump' }) },
+  { id: 'barrows', after: 'bye', when: s => !!s.up.barrows,
+    say: () => `<b>Wheelbarrows</b>: every trip now carries twice the wood. If fires still run dry, the walk is too long or too hot. A hut <b>halfway</b> between woodpiles and fires saves more than a hut by either end.`,
+    target: () => null },
   { id: 'mending', after: 'bye', when: s => !!s.up.mending,
     say: () => `The <b>mending crew</b> fixes cracked buildings for free after 20 seconds. If the tile's still too hot, it'll just crack again, mind.`,
     target: () => null },
@@ -1234,7 +1484,7 @@ let lesson = null;       // lesson on screen
 let advice = false;      // player tapped Wren for advice
 let shownKey = null;     // what the dock showed last, to animate and scroll only on change
 let tutTile = -1;        // tile the canvas marker points at
-let starveT = 0, lastTick = performance.now();
+let starveT = 0, fullT = 0, lastTick = performance.now();
 
 function tut() {
   if (!S.tut || typeof S.tut !== 'object') S.tut = { i: 0, seen: {}, off: false };
@@ -1255,7 +1505,8 @@ function tutTick() {
   const now = performance.now(), dt = Math.min(1, (now - lastTick) / 1000);
   lastTick = now;
   const t = tut();
-  starveT = S.fuel < 0.99 && S.prod.burn >= 0 && Sim.count(S, 'hearth') ? starveT + dt : 0;
+  starveT = coldFires().length ? starveT + dt : 0;
+  fullT = fullPiles().length ? fullT + dt : 0;
   // Advance the walkthrough past every step that is already done (players often get ahead of it).
   let m = mainStep();
   while (m && m.done && m.done(S)) { t.i++; m = mainStep(); if (m && m.enter) m.enter(); }

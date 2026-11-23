@@ -47,6 +47,12 @@ function placeScore(s, t, i) {
       const d = hs.length ? Math.min(...hs.map(j => dist(i, j))) : 9;
       return -temp + 15 * Math.min(d, 6);
     }
+    case 'hut': {
+      // Between the woodpiles and the fires, on cool ground.
+      const ends = all(s, 'lodge').concat(all(s, 'hearth'), all(s, 'kiln'));
+      const d = ends.length ? ends.reduce((a, j) => a + dist(i, j), 0) / ends.length : 0;
+      return -d * 40 - Math.max(0, temp - 150);
+    }
     case 'bellows': return adj(s, i, 'hearth') * 10 - adj(s, i, 'lodge') * 6 - adj(s, i, 'pit') * 2;
     case 'wall': {
       let v = -1e9;
@@ -183,8 +189,26 @@ function choose(s, cands, wv) {
   return bestNow ? [bestNow] : [];
 }
 
+// Wood logistics: fires out of wood while woodpiles sit full means too few carters.
+function logistics(s, out) {
+  let cold = 0, full = 0;
+  for (let i = 0; i < N * N; i++) {
+    const b = s.cells[i].b; if (!b || !Sim.unlocked(s, i)) continue;
+    if (Sim.isFire(b) && !b.cr && b.th > 0 && b.f < 0.01) cold++;
+    if (b.t === 'lodge' && b.f >= Sim.storeCap(b) - 0.01) full++;
+  }
+  if (!(full && cold)) return;
+  const opts = [];
+  const h = bestTiles(s, 'hut', 1)[0]; if (h !== undefined) opts.push({ k: 'build', t: 'hut', i: h });
+  for (const i of all(s, 'hut')) if (s.cells[i].b.l < B.hut.levels) opts.push({ k: 'level', i });
+  for (const id of ['barrows', 'cobbles', 'oxcarts']) if (Sim.upVisible(s, Sim.UMAP[id])) opts.push({ k: 'upgrade', id });
+  opts.sort((a, b) => costEq(costOf(s, a), 1) - costEq(costOf(s, b), 1));
+  out.push(...opts.slice(0, 1));
+}
+
 function housekeeping(s, out) {
   emergencies(s, out);
+  logistics(s, out);
   const f = Sim.UMAP.forge;
   if (Sim.upVisible(s, f)) {
     out.push({ k: 'upgrade', id: 'forge' });
@@ -219,7 +243,8 @@ const bots = {
   planner(s) {
     const out = [];
     const saving = housekeeping(s, out);
-    if (out.length || saving) return out;
+    if (out.some(a => a.k !== 'build' || a.t !== 'hut') || saving) return out;
+    if (out.length && affordable(s, out[0])) return out;
     const inc = income(s), wv = Math.min(0.5, woodValue(s));
     const value = st => {
       Sim.advance(st, 12);
@@ -246,7 +271,7 @@ const bots = {
 
     const cands = [];
     for (const t of Sim.ORDER) if (Sim.buildable(s, t)) for (const i of bestTiles(s, t, t === 'pit' ? 3 : 2)) cands.push({ k: 'build', t, i });
-    for (const t of ['pit', 'lodge', 'hearth', 'kiln', 'vent']) {
+    for (const t of ['pit', 'lodge', 'hearth', 'kiln', 'vent', 'hut']) {
       const list = all(s, t).filter(i => !s.cells[i].b.cr && s.cells[i].b.l < B[t].levels);
       list.sort((a, b) => Sim.levelCost(s, a).embers - Sim.levelCost(s, b).embers || 0);
       for (const i of list.slice(0, t === 'pit' ? 2 : 1)) cands.push({ k: 'level', i });

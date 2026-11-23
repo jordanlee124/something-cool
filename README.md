@@ -64,6 +64,7 @@ The core is a **heat grid**. Hearths burn wood and heat their tile, heat spreads
 - **Ember pits** make embers, best near 520°, and crack above 900°.
 - **Woodcutters** slow down above 120°, so they belong at the cool edge.
 - **Charcoal kilns** turn spare wood into embers and give off heat; they want the warm band around 380°.
+- **Wood is carried.** Woodcutters stack a pile and stop cutting when it's full; hearths and kilns burn from their own fuel store and go cold when it empties. **Carters** from a **Carter's hut** take wood to the fire most in need, walking the quickest route, and hot tiles slow them down, so the cold edge where woodcutters belong is a long, hot walk from the fires. Spare wood goes to the yard at the hut and pays for building. Wheelbarrows, a cobbled floor and ox carts raise how much they move.
 - **Bellows** (pumped by hand) boost the hearths next to them; **firebrick** blocks heat; **flue vents** draw it out.
 - Hearths and kilns can be run at full, half or off. Buildings level up. Overheated buildings crack, dump heat into their neighbours (which can crack them too) and need repairing.
 - **Expanding the floor** moves the cold edge outward, so the core runs hotter after every expansion and the layout has to be rethought.
